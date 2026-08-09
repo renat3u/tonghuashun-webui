@@ -6,6 +6,8 @@ DSH 前端占位仓库（placeholder）。
 
 基于参考图（同花顺风格股票终端 + AI Agent 工作区融合界面）设计并实现 DeepSeek Harness（DSH）的终端式前端：K 线图以股票行情隐喻展示代码量（10000 行代码 = 一条大绿线一砸到底）。
 
+![设计参考截图](assets/reference.png)
+
 ## 现状
 
 - 设计稿（Kimi Code 产出）：[`designs/dsh-terminal/DSH Terminal.html`](designs/dsh-terminal/DSH%20Terminal.html)（已迁入本仓库）
