@@ -8,7 +8,7 @@ DSH 前端占位仓库（placeholder）。
 
 ## 现状
 
-- 设计稿（Kimi Code 产出）：`/mnt/shared/_Projects/test-AdamPlatin123/designs/dsh-terminal/DSH Terminal.html`
+- 设计稿（Kimi Code 产出）：[`designs/dsh-terminal/DSH Terminal.html`](designs/dsh-terminal/DSH%20Terminal.html)（已迁入本仓库）
   - 顶部红色标题栏（指数条 + 搜索 + 登录）
   - 左栏（deepseek 字标 + HARNESS 徽章、导航、自选股列表）
   - 中栏（对话 / Trajectory 页签、agent 轨迹、仓库/分支选择、消息输入框、K 线 + 成交量图，日K/周K、MA5/10/20/60、VOL(5,10)）
@@ -34,6 +34,6 @@ DSH 前端占位仓库（placeholder）。
 
 ## 下一步
 
-1. 把设计稿移入本仓库（`designs/`）
+1. ~~把设计稿移入本仓库（`designs/`）~~（已完成，见 `designs/dsh-terminal/`）
 2. 选定技术栈（React + Vite，复用 `@deepseek-ai/dsh-client-*` 组件库）
 3. 实现缺失组件（ASCII 欢迎横幅、K 线/行情组件）

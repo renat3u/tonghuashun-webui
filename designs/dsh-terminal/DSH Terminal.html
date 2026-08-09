@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek Harness · DSH 在线</title>
+<style>
+  :root {
+    --bg: #0e1320;
+    --panel: #141a29;
+    --panel-2: #19203189;
+    --panel-solid: #1a2133;
+    --border: #252e45;
+    --border-soft: #1f2740;
+    --text: #d7dde9;
+    --dim: #8a93a8;
+    --faint: #5b6378;
+    --up: #e64545;
+    --up-bright: #ff5b5b;
+    --down: #2fbf62;
+    --down-bright: #35e075;
+    --accent: #e04545;
+    --ma5: #e8c558;
+    --ma10: #b06bd6;
+    --ma20: #4fc3a1;
+    --mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+    --sans: -apple-system, "SF Pro Text", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-width: 1180px;
+  }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ---------- 顶部红色标题栏 ---------- */
+  .topbar {
+    height: 42px;
+    flex: 0 0 42px;
+    background: linear-gradient(180deg, #c22c2c 0%, #b02525 100%);
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 0 14px;
+    box-shadow: 0 1px 0 rgba(0,0,0,.45);
+    z-index: 10;
+  }
+  .topbar .brand {
+    display: flex; align-items: center; gap: 8px;
+    color: #fff; font-size: 14px; font-weight: 700; letter-spacing: .5px;
+    white-space: nowrap;
+  }
+  .topbar .brand .logo-dot {
+    width: 18px; height: 18px; border-radius: 4px;
+    background: #fff; color: #b02525;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 800;
+  }
+  .topbar .brand .sub { font-weight: 400; opacity: .85; font-size: 12px; }
+  .top-indices { display: flex; gap: 20px; }
+  .top-indices .idx { display: flex; flex-direction: column; line-height: 1.15; }
+  .top-indices .idx .nm { color: rgba(255,255,255,.75); font-size: 10px; }
+  .top-indices .idx .vl { color: #fff; font-size: 12px; display: flex; gap: 6px; align-items: baseline; }
+  .top-indices .idx .vl .chg { font-size: 10px; }
+  .up-t { color: #ffd9d9; }
+  .topbar .spacer { flex: 1; }
+  .top-search {
+    width: 210px; height: 26px;
+    background: rgba(0,0,0,.22);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 4px;
+    color: rgba(255,255,255,.85);
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 9px; font-size: 11px;
+  }
+  .top-search svg { opacity: .7; flex: 0 0 auto; }
+  .top-actions { display: flex; gap: 14px; align-items: center; color: rgba(255,255,255,.85); }
+  .top-actions svg { display: block; }
+
+  /* ---------- 主区域三栏 ---------- */
+  .main { flex: 1; display: flex; min-height: 0; }
+
+  /* 左栏：导航 + 关注列表 */
+  .rail {
+    width: 218px; flex: 0 0 218px;
+    background: var(--panel);
+    border-right: 1px solid var(--border-soft);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .rail-logo {
+    height: 46px; display: flex; align-items: center; gap: 8px;
+    padding: 0 12px; border-bottom: 1px solid var(--border-soft);
+  }
+  .rail-logo .ds {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: linear-gradient(135deg, #4d6bfe, #8b5cf6);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rail-logo .ds svg { display: block; }
+  .rail-logo .t1 { font-size: 13px; font-weight: 700; color: #fff; letter-spacing: .3px; }
+  .rail-logo .t1 em { font-style: normal; color: var(--accent); font-size: 9px; font-weight: 800; vertical-align: super; margin-left: 2px; letter-spacing: .8px; }
+  .rail-logo .collapse { margin-left: auto; color: var(--faint); }
+  .nav { padding: 8px 0; display: flex; flex-direction: column; gap: 1px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 12px; color: var(--dim); font-size: 12px;
+    cursor: pointer; border-left: 2px solid transparent;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(255,255,255,.03); }
+  .nav-item.active {
+    color: #fff; background: linear-gradient(90deg, rgba(224,69,69,.22), rgba(224,69,69,.05));
+    border-left-color: var(--accent);
+  }
+  .nav-item svg { flex: 0 0 auto; opacity: .9; }
+  .watch { flex: 1; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--border-soft); }
+  .watch-head {
+    display: flex; align-items: center; padding: 8px 12px 6px;
+    color: var(--text); font-size: 12px; font-weight: 600;
+  }
+  .watch-head .gear { margin-left: auto; color: var(--faint); cursor: pointer; }
+  .watch-cols {
+    display: grid; grid-template-columns: 1fr auto auto;
+    padding: 0 12px 5px; color: var(--faint); font-size: 10px; gap: 8px;
+  }
+  .watch-cols span:nth-child(2), .watch-cols span:nth-child(3) { text-align: right; }
+  .watch-list { flex: 1; overflow-y: auto; }
+  .watch-row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
+    padding: 6px 12px; cursor: pointer; align-items: center;
+    border-left: 2px solid transparent;
+  }
+  .watch-row:hover { background: rgba(255,255,255,.03); }
+  .watch-row.sel { background: rgba(77,107,254,.13); border-left-color: #4d6bfe; }
+  .watch-row .nm { font-size: 12px; color: var(--text); line-height: 1.25; }
+  .watch-row .cd { font-size: 10px; color: var(--faint); font-family: var(--mono); }
+  .watch-row .pr { font-size: 12px; text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .watch-row .pc { font-size: 11px; text-align: right; font-family: var(--mono); min-width: 46px; }
+  .c-up { color: var(--up-bright); }
+  .c-down { color: var(--down-bright); }
+  .c-flat { color: var(--dim); }
+  .watch-add {
+    padding: 9px 12px; color: var(--dim); font-size: 12px; cursor: pointer;
+    border-top: 1px solid var(--border-soft); display: flex; align-items: center; gap: 7px;
+  }
+  .watch-add:hover { color: var(--text); }
+
+  /* 中栏 */
+  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+  /* 对话 / Trajectory */
+  .chat { flex: 1.15; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+  .tabs {
+    height: 32px; flex: 0 0 32px;
+    display: flex; align-items: flex-end; gap: 18px;
+    padding: 0 12px; border-bottom: 1px solid var(--border-soft);
+  }
+  .tabs .tab { padding: 0 1px 7px; color: var(--dim); font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tabs .tab.active { color: #fff; border-bottom-color: var(--accent); font-weight: 600; }
+  .traj { flex: 1; overflow-y: auto; padding: 10px 12px 6px; display: flex; flex-direction: column; gap: 2px; }
+  .step { display: flex; gap: 9px; padding: 3px 0; align-items: baseline; line-height: 1.5; }
+  .step .ts { color: var(--faint); font-size: 10px; font-family: var(--mono); flex: 0 0 44px; }
+  .step .tag {
+    flex: 0 0 auto; font-size: 10px; font-weight: 700; font-family: var(--mono);
+    padding: 0 5px; border-radius: 3px; height: 15px; line-height: 15px; align-self: center;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .tag.think { color: #c792ea; background: rgba(199,146,234,.12); }
+  .tag.read  { color: #6cb6ff; background: rgba(108,182,255,.12); }
+  .tag.bash  { color: #f0a45c; background: rgba(240,164,92,.12); }
+  .tag.skill { color: #4fd6c1; background: rgba(79,214,193,.12); }
+  .step .body { color: var(--dim); font-size: 11.5px; min-width: 0; }
+  .step .body .hl { color: #8ab8ff; font-family: var(--mono); font-size: 11px; background: rgba(108,182,255,.1); padding: 0 4px; border-radius: 3px; }
+  .step .body .path { color: #9ecbff; font-family: var(--mono); font-size: 11px; text-decoration: underline; text-decoration-color: rgba(158,203,255,.35); }
+  .step.open .body { color: var(--text); }
+  .step .chev { margin-left: auto; color: var(--faint); flex: 0 0 auto; }
+  .step-zh { padding: 6px 0 2px 53px; color: var(--text); font-size: 12px; line-height: 1.7; }
+  .chip-row { display: flex; gap: 6px; padding: 4px 12px 0; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--panel-solid); border: 1px solid var(--border);
+    color: var(--dim); font-size: 11px; border-radius: 5px; padding: 3px 8px;
+    font-family: var(--mono); cursor: pointer;
+  }
+  .chip:hover { color: var(--text); border-color: #34405e; }
+  .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--down); }
+  .composer { padding: 8px 12px 10px; }
+  .composer .box {
+    background: var(--panel-solid);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 11px 7px;
+  }
+  .composer .box:focus-within { border-color: #3a4e8a; }
+  .composer .ph { color: var(--faint); font-size: 12px; }
+  .composer .ph .caret { display: inline-block; width: 7px; height: 13px; background: #6c8cff; vertical-align: -2px; margin-right: 5px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .composer .row { display: flex; align-items: center; gap: 9px; margin-top: 9px; }
+  .composer .plus {
+    width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border);
+    color: var(--dim); display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .composer .access {
+    display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 11px;
+    border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; cursor: pointer;
+  }
+  .composer .access .lock { color: var(--ma5); }
+  .composer .grow { flex: 1; }
+  .composer .model { color: var(--dim); font-size: 11px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .composer .send {
+    width: 26px; height: 26px; border-radius: 6px; border: none;
+    background: var(--accent); color: #fff; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .composer .send:hover { background: var(--up-bright); }
+
+  /* 图表区 */
+  .chart-wrap {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    background: var(--panel); border-top: 1px solid var(--border);
+  }
+  .chart-tabs {
+    height: 30px; flex: 0 0 30px; display: flex; align-items: center; gap: 4px;
+    padding: 0 10px; border-bottom: 1px solid var(--border-soft);
+  }
+  .chart-tabs .ct {
+    padding: 3px 8px; color: var(--dim); font-size: 11px; cursor: pointer; border-radius: 3px;
+  }
+  .chart-tabs .ct:hover { color: var(--text); }
+  .chart-tabs .ct.active { color: #fff; background: var(--accent); }
+  .chart-tabs .grow { flex: 1; }
+  .chart-tools { display: flex; gap: 12px; align-items: center; color: var(--dim); font-size: 11px; }
+  .chart-tools span { cursor: pointer; display: flex; align-items: center; gap: 3px; }
+  .chart-tools span:hover { color: var(--text); }
+  .chart-body { flex: 1; position: relative; min-height: 0; }
+  #kchart { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  .ohlc {
+    position: absolute; left: 56px; top: 4px; z-index: 3;
+    display: flex; gap: 12px; align-items: baseline;
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+    pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.6);
+    background: rgba(14,19,32,.72); padding: 2px 8px; border-radius: 4px;
+  }
+  .ohlc b { font-weight: 400; }
+
+  /* 右栏：行情详情 */
+  .quote {
+    width: 264px; flex: 0 0 264px;
+    background: var(--panel); border-left: 1px solid var(--border-soft);
+    display: flex; flex-direction: column; min-height: 0; overflow-y: auto;
+  }
+  .q-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--border-soft); }
+  .q-title { display: flex; align-items: baseline; gap: 8px; }
+  .q-title .nm { font-size: 15px; font-weight: 700; color: #fff; }
+  .q-title .cd { font-size: 11px; color: var(--faint); font-family: var(--mono); }
+  .q-title .pin { margin-left: auto; color: var(--faint); }
+  .q-price { display: flex; align-items: baseline; gap: 10px; margin-top: 8px; }
+  .q-price .big { font-size: 26px; font-weight: 700; color: var(--up-bright); font-family: var(--mono); letter-spacing: -.5px; }
+  .q-price .delta { display: flex; flex-direction: column; font-size: 11px; color: var(--up-bright); font-family: var(--mono); line-height: 1.3; }
+  .q-price.down .big, .q-price.down .delta { color: var(--down-bright); }
+  .q-tags { display: flex; gap: 6px; margin-top: 9px; align-items: center; }
+  .q-tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    border: 1px solid var(--border); color: var(--dim);
+  }
+  .q-tag.hot { color: var(--up-bright); border-color: rgba(230,69,69,.4); background: rgba(230,69,69,.08); }
+  .q-sector { margin-left: auto; font-size: 10.5px; color: #8ab8ff; }
+  .q-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border-soft);
+    font-size: 11px;
+  }
+  .q-grid .cell { display: flex; justify-content: space-between; }
+  .q-grid .k { color: var(--faint); }
+  .q-grid .v { font-family: var(--mono); color: var(--text); }
+  .book-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-soft); }
+  .book-tabs .bt {
+    flex: 1; text-align: center; padding: 7px 0; font-size: 11px; color: var(--dim); cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .book-tabs .bt.active { color: #fff; border-bottom-color: var(--accent); font-weight: 600; }
+  .book { padding: 6px 0; }
+  .book-row {
+    display: grid; grid-template-columns: 34px 1fr auto; gap: 8px;
+    padding: 3px 14px; font-size: 11px; align-items: center; position: relative;
+  }
+  .book-row .lv { color: var(--faint); }
+  .book-row .pr { font-family: var(--mono); text-align: right; }
+  .book-row .qt { font-family: var(--mono); color: var(--dim); text-align: right; min-width: 30px; }
+  .book-row .bar { position: absolute; right: 0; top: 2px; bottom: 2px; opacity: .12; pointer-events: none; }
+  .book-row.sell .bar { background: var(--down); }
+  .book-row.buy .bar { background: var(--up); }
+  .book-divider { height: 1px; background: var(--border-soft); margin: 5px 0; }
+  .tape { border-top: 1px solid var(--border-soft); display: flex; flex-direction: column; min-height: 0; }
+  .tape-head {
+    display: flex; align-items: center; padding: 7px 14px 5px;
+    color: var(--text); font-size: 11.5px; font-weight: 600;
+  }
+  .tape-head .x { margin-left: auto; color: var(--faint); cursor: pointer; }
+  .tape-cols, .tape-row {
+    display: grid; grid-template-columns: 44px 1fr auto 18px; gap: 8px;
+    padding: 2px 14px; font-size: 11px;
+  }
+  .tape-cols { color: var(--faint); font-size: 10px; padding-bottom: 4px; }
+  .tape-cols span:nth-child(2), .tape-cols span:nth-child(3),
+  .tape-row .pr, .tape-row .qt { text-align: right; font-family: var(--mono); }
+  .tape-row .tm { color: var(--faint); font-family: var(--mono); }
+  .tape-row .bs { font-weight: 700; font-family: var(--mono); text-align: center; }
+
+  /* 底部状态栏 */
+  .statusbar {
+    height: 26px; flex: 0 0 26px;
+    background: #10141f; border-top: 1px solid var(--border-soft);
+    display: flex; align-items: center; gap: 18px; padding: 0 12px;
+    font-size: 10.5px; color: var(--dim);
+  }
+  .statusbar .grp { display: flex; gap: 6px; align-items: baseline; font-family: var(--mono); }
+  .statusbar .grow { flex: 1; }
+  .statusbar .conn { display: flex; gap: 6px; align-items: center; }
+  .statusbar .conn .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--down); box-shadow: 0 0 6px var(--down); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #2a3350; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<!-- 顶部红色标题栏 -->
+<header class="topbar" data-screen-label="topbar">
+  <div class="brand">
+    <span class="logo-dot">DS</span>
+    <span>DeepSeek Harness</span>
+    <span class="sub">· DSH 在线</span>
+  </div>
+  <div class="top-indices">
+    <div class="idx">
+      <span class="nm">总代码量</span>
+      <span class="vl num">114,832 <span class="chg" style="color:#9ff0c0">-8.01%</span></span>
+    </div>
+    <div class="idx">
+      <span class="nm">活跃会话</span>
+      <span class="vl num">10,846 <span class="chg up-t">+0.67%</span></span>
+    </div>
+    <div class="idx">
+      <span class="nm">Token 消耗</span>
+      <span class="vl num">2,201.33亿 <span class="chg" style="color:#9ff0c0">-0.21%</span></span>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="top-search">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <span>代码 / 会话 / 拼音</span>
+  </div>
+  <div class="top-actions">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/></svg>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-5.5 8-5.5s6.5 1.5 8 5.5"/></svg>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- 左栏：导航 + 关注列表 -->
+  <aside class="rail" data-screen-label="rail">
+    <div class="rail-logo">
+      <span class="ds">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg>
+      </span>
+      <span class="t1">deepseek <span style="font-weight:400;color:var(--dim)">HARNESS</span><em>PRO</em></span>
+      <span class="collapse">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 17l-5-5 5-5"/><path d="M18 17l-5-5 5-5"/></svg>
+      </span>
+    </div>
+    <nav class="nav">
+      <div class="nav-item"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/></svg>项目</div>
+      <div class="nav-item"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>行情</div>
+      <div class="nav-item"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3L3 8l5 5"/><path d="M3 8h13"/><path d="M16 21l5-5-5-5"/><path d="M21 16H8"/></svg>会话</div>
+      <div class="nav-item"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20V4H6.5A2.5 2.5 0 004 6.5v13z"/><path d="M4 19.5A2.5 2.5 0 006.5 22H20v-5"/></svg>技能</div>
+      <div class="nav-item"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>数据</div>
+      <div class="nav-item"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7a4 4 0 004 4h3"/></svg>插件</div>
+      <div class="nav-item active"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12h6M9 8.5h6M9 15.5h3"/></svg>AI 助手</div>
+      <div class="nav-item"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>更多</div>
+    </nav>
+    <div class="watch">
+      <div class="watch-head">关注包
+        <span class="gear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></span>
+      </div>
+      <div class="watch-cols"><span>名称</span><span>代码量</span><span>涨跌幅</span></div>
+      <div class="watch-list" id="watchList"></div>
+      <div class="watch-add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>添加关注</div>
+    </div>
+  </aside>
+
+  <!-- 中栏 -->
+  <section class="center" data-screen-label="center">
+
+    <!-- 对话 / Trajectory -->
+    <div class="chat">
+      <div class="tabs">
+        <span class="tab active">对话</span>
+        <span class="tab">Trajectory</span>
+        <span class="tab">检查点</span>
+      </div>
+      <div class="traj" id="traj">
+        <div class="step">
+          <span class="ts">09:45:12</span>
+          <span class="tag think">◆ Think</span>
+          <span class="body">The main file for the code-volume chart is <span class="hl">apps/web/src/chart/LocPane.tsx</span>. Let me read it and the related canvas renderer…</span>
+        </div>
+        <div class="step">
+          <span class="ts">09:45:13</span>
+          <span class="tag read">↗ Read</span>
+          <span class="body"><span class="path">apps/web/src/chart/LocPane.tsx</span></span>
+        </div>
+        <div class="step">
+          <span class="ts">09:45:14</span>
+          <span class="tag bash">$ Bash</span>
+          <span class="body">List chart directory contents</span>
+        </div>
+        <div class="step">
+          <span class="ts">09:45:15</span>
+          <span class="tag think">◆ Think</span>
+          <span class="body">Now let me look at the CSS in <span class="hl">chart.module.css</span> for the candle styles, and take a screenshot of the…</span>
+        </div>
+        <div class="step">
+          <span class="ts">09:45:16</span>
+          <span class="tag bash">$ Bash</span>
+          <span class="body">Find chart-related CSS rules</span>
+        </div>
+        <div class="step">
+          <span class="ts">09:45:18</span>
+          <span class="tag read">↗ Read</span>
+          <span class="body"><span class="path">apps/web/src/chart/chart.module.css</span></span>
+        </div>
+        <div class="step open">
+          <span class="ts">09:45:22</span>
+          <span class="tag think">◆ Think</span>
+          <span class="body">Now let me take a screenshot of the actual GUI to see what the K-line chart looks like right now. I nee…</span>
+          <span class="chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+        </div>
+        <div class="step-zh" lang="zh">现在截图看运行中 GUI 的图谱实际效果：</div>
+        <div class="step">
+          <span class="ts">09:45:25</span>
+          <span class="tag skill">✦ Skill</span>
+          <span class="body"><span class="hl">record-browser-gif</span></span>
+        </div>
+        <div class="step">
+          <span class="ts">09:45:27</span>
+          <span class="tag think">◆ Think</span>
+          <span class="body">Let me open the GUI and find the chart. The GUI is at http://127.0.0.1:4311. I need to find how the…</span>
+        </div>
+        <div class="step">
+          <span class="ts">09:45:29</span>
+          <span class="tag bash">$ Bash</span>
+          <span class="body">Open GUI and inspect current page state</span>
+        </div>
+        <div class="step">
+          <span class="ts">09:46:02</span>
+          <span class="tag read">↗ Edit</span>
+          <span class="body"><span class="path">apps/web/src/chart/LocPane.tsx</span> <span style="color:var(--down-bright)">-10,000 行</span> · 删掉手写渲染循环，换成 canvas 单次绘制</span>
+        </div>
+        <div class="step">
+          <span class="ts">09:46:41</span>
+          <span class="tag bash">$ Bash</span>
+          <span class="body">pnpm run test:coverage — 124 个用例全部通过</span>
+        </div>
+        <div class="step open">
+          <span class="ts">09:47:05</span>
+          <span class="tag think">◆ Think</span>
+          <span class="body">一万行死代码一口气删干净，代码量指数直接一砸到底。盘口全绿，这是好事。</span>
+        </div>
+      </div>
+      <div class="chip-row">
+        <span class="chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20V2H6.5A2.5 2.5 0 004 4.5v15z"/></svg>dsh-git-graph<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+        <span class="chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="10" r="2.4"/><path d="M6 8.4v7.2M6 15a8 8 0 008-5h1.6"/></svg>main<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="composer">
+        <div class="box">
+          <div class="ph"><span class="caret"></span>给 DeepSeek 发消息</div>
+          <div class="row">
+            <span class="plus"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg></span>
+            <span class="access"><svg class="lock" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>Full access<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+            <span class="grow"></span>
+            <span class="model">DeepSeek V4 Flash Max<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+            <button class="send"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l16 9-16 9v-7l9-2-9-2V3z"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- K 线图 -->
+    <div class="chart-wrap" data-screen-label="chart">
+      <div class="chart-tabs">
+        <span class="ct">分时</span>
+        <span class="ct">5日</span>
+        <span class="ct active">日K</span>
+        <span class="ct">周K</span>
+        <span class="ct">月K</span>
+        <span class="ct">更多<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+        <span class="grow"></span>
+        <div class="chart-tools">
+          <span>前复权<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+          <span>叠加<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+          <span>画线</span>
+          <span>指标<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+          <span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></span>
+        </div>
+      </div>
+      <div class="chart-body">
+        <div class="ohlc" id="ohlcInfo"></div>
+        <canvas id="kchart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- 右栏：行情详情 -->
+  <aside class="quote" data-screen-label="quote">
+    <div class="q-head">
+      <div class="q-title">
+        <span class="nm">DeepSeek Harness</span>
+        <span class="cd">DSH001</span>
+        <span class="pin"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.9 6.3 6.6.7-5 4.6 1.4 6.5L12 16.9 6.1 20l1.4-6.5-5-4.6 6.6-.7L12 2z"/></svg></span>
+      </div>
+      <div class="q-price down">
+        <span class="big num">114,832</span>
+        <span class="delta"><span>-10,000</span><span>-8.01%</span></span>
+      </div>
+      <div class="q-tags">
+        <span class="q-tag hot">融</span>
+        <span class="q-tag">通</span>
+        <span class="q-sector">AI 编程 -8.01%</span>
+      </div>
+    </div>
+    <div class="q-grid">
+      <div class="cell"><span class="k">最高</span><span class="v" style="color:var(--up-bright)">124,900</span></div>
+      <div class="cell"><span class="k">今开</span><span class="v" style="color:var(--down-bright)">124,020</span></div>
+      <div class="cell"><span class="k">最低</span><span class="v" style="color:var(--down-bright)">114,700</span></div>
+      <div class="cell"><span class="k">昨收</span><span class="v">124,832</span></div>
+      <div class="cell"><span class="k">提交量</span><span class="v">256</span></div>
+      <div class="cell"><span class="k">Token额</span><span class="v">41.3亿</span></div>
+      <div class="cell"><span class="k">变更率</span><span class="v">0.20%</span></div>
+      <div class="cell"><span class="k">上下文(TTM)</span><span class="v">25.31</span></div>
+      <div class="cell"><span class="k">总Token</span><span class="v">20,448亿</span></div>
+      <div class="cell"><span class="k">会话市值</span><span class="v">20,448亿</span></div>
+    </div>
+    <div class="book-tabs">
+      <span class="bt active">五档</span>
+      <span class="bt">提交明细</span>
+      <span class="bt">资金流向</span>
+    </div>
+    <div class="book" id="book"></div>
+    <div class="tape">
+      <div class="tape-head">分时成交
+        <span class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+      </div>
+      <div class="tape-cols"><span>时间</span><span>代码量</span><span>变更</span><span></span></div>
+      <div id="tapeList"></div>
+    </div>
+  </aside>
+</div>
+
+<!-- 底部状态栏 -->
+<footer class="statusbar" data-screen-label="statusbar">
+  <span class="grp">DSH指数 <b class="num" style="color:var(--down-bright)">114,832 ▼-10,000 -8.01%</b></span>
+  <span class="grp">会话指数 <b class="num" style="color:var(--up-bright)">10,846.59 ▲93.63 +0.67%</b></span>
+  <span class="grp">插件指数 <b class="num" style="color:var(--down-bright)">2,201.33 ▼-4.87 -0.21%</b></span>
+  <span class="grow"></span>
+  <span class="grp num" id="clock">2026-08-09 15:00:00</span>
+  <span class="conn"><span class="pulse"></span>已连接</span>
+</footer>
+
+<script>
+/* ================= 数据 ================= */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const rand = mulberry32(20260809);
+const fmt = n => n.toLocaleString('en-US');
+
+/* 关注包列表 */
+const watchRows = [
+  ['dsh-core','CORE01', 24521, +2.31, true],
+  ['dsh-bash','BASH02',  8340, -0.86, false],
+  ['dsh-pty','PTY003',   6012, +1.23, false],
+  ['dsh-fs','FS0004',    5478, +0.74, false],
+  ['dsh-lsp','LSP005',   4102, -1.12, false],
+  ['dsh-web','WEB006',   3355, +0.42, false],
+  ['dsh-acp','ACP007',   2180, +2.01, false],
+  ['dsh-ui','UI0008',    1966, -0.34, false],
+];
+document.getElementById('watchList').innerHTML = watchRows.map(([nm,cd,pr,pc,sel]) => {
+  const cls = pc > 0 ? 'c-up' : pc < 0 ? 'c-down' : 'c-flat';
+  const sign = pc > 0 ? '+' : '';
+  return `<div class="watch-row${sel?' sel':''}">
+    <div><div class="nm">${nm}</div><div class="cd">${cd}</div></div>
+    <div class="pr ${cls}">${fmt(pr)}</div>
+    <div class="pc ${cls}">${sign}${pc.toFixed(2)}%</div>
+  </div>`;
+}).join('');
+document.querySelectorAll('.watch-row').forEach(r => r.addEventListener('click', () => {
+  document.querySelectorAll('.watch-row').forEach(x => x.classList.remove('sel'));
+  r.classList.add('sel');
+}));
+
+/* 五档盘口：全线跌破昨收 124,832，一片惨绿 */
+const bookRows = [
+  ['卖5', 115100, 120, 'sell'], ['卖4', 115050, 98, 'sell'], ['卖3', 115000, 87, 'sell'],
+  ['卖2', 114920, 56, 'sell'],  ['卖1', 114880, 23, 'sell'],
+  ['买1', 114832, 45, 'buy'],   ['买2', 114800, 67, 'buy'],   ['买3', 114750, 89, 'buy'],
+  ['买4', 114700, 112, 'buy'],  ['买5', 114650, 78, 'buy'],
+];
+const maxQty = Math.max(...bookRows.map(r => r[2]));
+document.getElementById('book').innerHTML = bookRows.map(([lv,pr,qt,side],i) => {
+  const w = (qt / maxQty * 100).toFixed(1);
+  const bar = `<span class="bar" style="width:${w}%"></span>`;
+  const divider = i === 5 ? '<div class="book-divider"></div>' : '';
+  return `${divider}<div class="book-row ${side}">
+    ${bar}<span class="lv">${lv}</span>
+    <span class="pr c-down">${fmt(pr)}</span>
+    <span class="qt">${qt}</span>
+  </div>`;
+}).join('');
+
+/* 分时成交 */
+const tapeSeed = [
+  ['14:54', 114780, 156, 'S'], ['14:55', 114790, 88, 'B'], ['14:55', 114810, 34, 'B'],
+  ['14:56', 114832, 23, 'S'], ['14:56', 114820, 12, 'B'], ['14:56', 114820, 45, 'S'],
+  ['14:57', 114832, 67, 'B'], ['15:00', 114832, 10000, 'S'],
+];
+const tapeEl = document.getElementById('tapeList');
+function tapeRow([tm,pr,qt,bs]) {
+  const cls = bs === 'B' ? 'c-up' : 'c-down';
+  return `<div class="tape-row"><span class="tm">${tm}</span><span class="pr ${cls}">${fmt(pr)}</span><span class="qt">${fmt(qt)}</span><span class="bs ${cls}">${bs}</span></div>`;
+}
+tapeEl.innerHTML = tapeSeed.map(tapeRow).join('');
+
+/* 状态栏时钟 */
+function tickClock() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  document.getElementById('clock').textContent =
+    `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+tickClock(); setInterval(tickClock, 1000);
+
+/* ================= K 线 + 代码量图 ================= */
+const DAYS = 110;
+const PREV_CLOSE = 124832;   // 昨收
+const TODAY_CLOSE = 114832;  // 现价（-10,000 一砸到底）
+
+/* 生成交易日（截止 2026-08-07） */
+const dates = [];
+{
+  const d = new Date(2026, 7, 7);
+  while (dates.length < DAYS) {
+    const w = d.getDay();
+    if (w !== 0 && w !== 6) dates.unshift(new Date(d));
+    d.setDate(d.getDate() - 1);
+  }
+}
+
+/* 生成 K 线：长期慢牛爬升，最后一天一万行重构大绿线砸穿 */
+const candles = [];
+{
+  let prev = 118400;
+  for (let i = 0; i < DAYS - 1; i++) {
+    const o = prev * (1 + (rand() - 0.5) * 0.004);
+    let c;
+    if (i === DAYS - 2) c = PREV_CLOSE;
+    else {
+      c = o * (1 + 0.0006 + (rand() - 0.5) * 0.011);
+      c = Math.min(Math.max(c, 116000), 125500);
+    }
+    const h = Math.max(o, c) * (1 + rand() * 0.0035);
+    const l = Math.min(o, c) * (1 - rand() * 0.0035);
+    const loc = Math.round(150 + rand() * rand() * 1500);
+    candles.push({ o, h, l, c, loc });
+    prev = c;
+  }
+  candles.push({ o: 124020, h: 124900, l: 114700, c: TODAY_CLOSE, loc: 10000 });
+}
+const CRASH_IDX = DAYS - 1;
+
+function ma(arr, n, key) {
+  const out = new Array(arr.length).fill(null);
+  let s = 0;
+  for (let i = 0; i < arr.length; i++) {
+    s += arr[i][key];
+    if (i >= n) s -= arr[i - n][key];
+    if (i >= n - 1) out[i] = s / n;
+  }
+  return out;
+}
+const ma5 = ma(candles, 5, 'c'), ma10 = ma(candles, 10, 'c'), ma20 = ma(candles, 20, 'c');
+const vma5 = ma(candles, 5, 'loc'), vma10 = ma(candles, 10, 'loc');
+
+const canvas = document.getElementById('kchart');
+const ctx = canvas.getContext('2d');
+const ohlcEl = document.getElementById('ohlcInfo');
+const UP = '#e64545', DOWN = '#2fbf62', DOWN_BRIGHT = '#35e075';
+const GRID = 'rgba(120,130,155,.14)', AXIS = '#7d8698';
+let hover = -1, pulse = false;
+
+function layout() {
+  const r = canvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(r.width * dpr);
+  canvas.height = Math.round(r.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { W: r.width, H: r.height };
+}
+
+function draw() {
+  const { W, H } = layout();
+  const padL = 52, padR = 12, padT = 20, padB = 15;
+  const mainH = (H - padT - padB) * 0.64;
+  const volTop = padT + mainH + 8;
+  const volH = H - padB - volTop;
+  const plotW = W - padL - padR;
+  const slot = plotW / DAYS;
+  const bw = Math.max(2, slot * 0.62);
+
+  let lo = Infinity, hi = -Infinity;
+  candles.forEach(k => { lo = Math.min(lo, k.l); hi = Math.max(hi, k.h); });
+  const pad = (hi - lo) * 0.05;
+  lo -= pad; hi += pad;
+  const X = i => padL + i * slot + slot / 2;
+  const Y = p => padT + (hi - p) / (hi - lo) * mainH;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.font = '10px "SF Mono", Consolas, monospace';
+  ctx.textBaseline = 'middle';
+
+  /* 主图网格 + 价格刻度 */
+  ctx.textAlign = 'left';
+  for (let g = 0; g <= 4; g++) {
+    const p = lo + (hi - lo) * g / 4;
+    const y = Y(p);
+    ctx.strokeStyle = GRID;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle = AXIS;
+    ctx.fillText(fmt(Math.round(p)), 5, y);
+  }
+  /* 昨收参考虚线 */
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = 'rgba(232,197,88,.35)';
+  ctx.beginPath(); ctx.moveTo(padL, Y(PREV_CLOSE)); ctx.lineTo(W - padR, Y(PREV_CLOSE)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#e8c558';
+  ctx.fillText(fmt(PREV_CLOSE), 5, Y(PREV_CLOSE) - 7);
+
+  /* 代码量子图网格：顶格 10,000 一砸到底 */
+  ctx.strokeStyle = GRID;
+  ctx.beginPath(); ctx.moveTo(padL, volTop); ctx.lineTo(W - padR, volTop); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(padL, volTop + volH); ctx.lineTo(W - padR, volTop + volH); ctx.stroke();
+  ctx.fillStyle = AXIS;
+  ctx.fillText('10,000', 5, volTop + 5);
+  ctx.fillText('5,000', 5, volTop + volH / 2);
+  ctx.fillText('0', 5, volTop + volH - 4);
+
+  /* 日期刻度（按月） */
+  ctx.textAlign = 'center';
+  let lastM = -1;
+  for (let i = 0; i < DAYS; i++) {
+    const m = dates[i].getMonth();
+    if (m !== lastM) {
+      lastM = m;
+      ctx.fillStyle = AXIS;
+      const lbl = m === 0 ? `${dates[i].getFullYear()}/01` : String(m + 1).padStart(2, '0');
+      ctx.fillText(lbl, X(i), H - 7);
+      ctx.strokeStyle = GRID;
+      ctx.beginPath(); ctx.moveTo(X(i), padT); ctx.lineTo(X(i), volTop + volH); ctx.stroke();
+    }
+  }
+
+  /* 蜡烛 */
+  candles.forEach((k, i) => {
+    const up = k.c >= k.o;
+    const col = up ? UP : DOWN;
+    const x = X(i);
+    ctx.strokeStyle = col;
+    ctx.beginPath(); ctx.moveTo(x, Y(k.h)); ctx.lineTo(x, Y(k.l)); ctx.stroke();
+    const yO = Y(k.o), yC = Y(k.c);
+    const top = Math.min(yO, yC), hgt = Math.max(1, Math.abs(yC - yO));
+    if (up) {
+      ctx.fillStyle = 'rgba(20,16,24,.9)';
+      ctx.fillRect(x - bw / 2, top, bw, hgt);
+      ctx.strokeRect(x - bw / 2, top, bw, hgt);
+    } else {
+      ctx.fillStyle = col;
+      ctx.fillRect(x - bw / 2, top, bw, hgt);
+    }
+  });
+
+  /* 大绿线呼吸光晕 */
+  if (pulse) {
+    const x = X(CRASH_IDX);
+    const top = Math.min(Y(candles[CRASH_IDX].o), Y(candles[CRASH_IDX].c));
+    const hgt = Math.abs(Y(candles[CRASH_IDX].c) - Y(candles[CRASH_IDX].o));
+    ctx.save();
+    ctx.shadowColor = DOWN_BRIGHT; ctx.shadowBlur = 18;
+    ctx.fillStyle = 'rgba(47,191,98,.5)';
+    ctx.fillRect(x - bw / 2, top, bw, hgt);
+    ctx.restore();
+  }
+
+  /* 均线 */
+  const drawMA = (arr, col) => {
+    ctx.strokeStyle = col; ctx.lineWidth = 1.1; ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < DAYS; i++) {
+      if (arr[i] == null) continue;
+      const x = X(i), y = Y(arr[i]);
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke(); ctx.lineWidth = 1;
+  };
+  drawMA(ma5, '#e8c558'); drawMA(ma10, '#b06bd6'); drawMA(ma20, '#4fc3a1');
+
+  /* 主图均线图例 */
+  ctx.textAlign = 'left';
+  let lx = padL + 2;
+  const legend = [
+    [`MA5: ${fmt(Math.round(ma5[DAYS-1]))}`, '#e8c558'],
+    [`MA10: ${fmt(Math.round(ma10[DAYS-1]))}`, '#b06bd6'],
+    [`MA20: ${fmt(Math.round(ma20[DAYS-1]))}`, '#4fc3a1'],
+  ];
+  legend.forEach(([t, c]) => { ctx.fillStyle = c; ctx.fillText(t, lx, padT - 9); lx += ctx.measureText(t).width + 14; });
+
+  /* 代码量柱：昨收为界分红绿，最后一根一万行直接顶格砸到底 */
+  candles.forEach((k, i) => {
+    const col = k.c >= k.o ? UP : DOWN;
+    const bh = Math.max(1, k.loc / 10000 * volH);
+    ctx.fillStyle = col;
+    if (i === CRASH_IDX && pulse) {
+      ctx.save(); ctx.shadowColor = DOWN_BRIGHT; ctx.shadowBlur = 16;
+      ctx.fillRect(X(i) - bw / 2, volTop + volH - bh, bw, bh);
+      ctx.restore();
+    } else {
+      ctx.fillRect(X(i) - bw / 2, volTop + volH - bh, bw, bh);
+    }
+  });
+
+  /* 代码量均线 */
+  const drawVMA = (arr, col) => {
+    ctx.strokeStyle = col; ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < DAYS; i++) {
+      if (arr[i] == null) continue;
+      const x = X(i), y = volTop + volH - arr[i] / 10000 * volH;
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  };
+  drawVMA(vma5, '#e8c558'); drawVMA(vma10, '#b06bd6');
+
+  /* 子图图例 */
+  ctx.fillStyle = AXIS;
+  ctx.fillText('LOC(5,10)', padL + 2, volTop + 9);
+  let vx = padL + 2 + ctx.measureText('LOC(5,10)').width + 10;
+  ctx.fillStyle = '#d7dde9'; ctx.fillText('代码量: 10,000', vx, volTop + 9);
+  vx += ctx.measureText('代码量: 10,000').width + 10;
+  ctx.fillStyle = '#e8c558'; ctx.fillText(`MA5: ${fmt(Math.round(vma5[DAYS-1]))}`, vx, volTop + 9);
+  vx += ctx.measureText(`MA5: ${fmt(Math.round(vma5[DAYS-1]))}`).width + 10;
+  ctx.fillStyle = '#b06bd6'; ctx.fillText(`MA10: ${fmt(Math.round(vma10[DAYS-1]))}`, vx, volTop + 9);
+
+  /* 「一砸到底」标注：箭头指向大绿线 */
+  const bx = X(CRASH_IDX);
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 12px "PingFang SC", "Noto Sans SC", sans-serif';
+  ctx.save();
+  ctx.shadowColor = DOWN_BRIGHT; ctx.shadowBlur = 10;
+  ctx.fillStyle = DOWN_BRIGHT;
+  ctx.fillText('-10,000 行 · 一砸到底', bx - 12, volTop + 26);
+  ctx.restore();
+  ctx.strokeStyle = DOWN_BRIGHT; ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(bx - 14, volTop + 32);
+  ctx.lineTo(bx - 2, volTop + 10);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(bx - 2, volTop + 10);
+  ctx.lineTo(bx - 10, volTop + 12);
+  ctx.moveTo(bx - 2, volTop + 10);
+  ctx.lineTo(bx - 4, volTop + 19);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.font = '10px "SF Mono", Consolas, monospace';
+
+  /* 主图「万行重构」旗标 */
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(53,224,117,.85)';
+  ctx.font = 'bold 10px "PingFang SC", sans-serif';
+  ctx.fillText('万行重构 ▼', bx - 4, Y(candles[CRASH_IDX].h) + 10);
+  ctx.font = '10px "SF Mono", Consolas, monospace';
+
+  /* 十字光标 */
+  if (hover >= 0 && hover < DAYS) {
+    const k = candles[hover];
+    const x = X(hover);
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(200,210,230,.5)';
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, volTop + volH); ctx.stroke();
+    const cy = Y(k.c);
+    ctx.beginPath(); ctx.moveTo(padL, cy); ctx.lineTo(W - padR, cy); ctx.stroke();
+    ctx.setLineDash([]);
+    /* 轴价格标签 */
+    ctx.fillStyle = '#2a3450';
+    ctx.fillRect(2, cy - 8, padL - 4, 16);
+    ctx.fillStyle = '#d7dde9'; ctx.textAlign = 'left';
+    ctx.fillText(fmt(Math.round(k.c)), 5, cy);
+
+    const d = dates[hover];
+    const p = n => String(n).padStart(2, '0');
+    const chg = (k.c - k.o) / k.o * 100;
+    const cc = chg >= 0 ? 'var(--up-bright)' : 'var(--down-bright)';
+    ohlcEl.innerHTML =
+      `<b>${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())}</b>` +
+      `<span>开:<b>${fmt(Math.round(k.o))}</b></span>` +
+      `<span>高:<b style="color:var(--up-bright)">${fmt(Math.round(k.h))}</b></span>` +
+      `<span>低:<b style="color:var(--down-bright)">${fmt(Math.round(k.l))}</b></span>` +
+      `<span>收:<b style="color:${cc}">${fmt(Math.round(k.c))}</b></span>` +
+      `<span style="color:${cc}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>` +
+      `<span>代码量:<b style="color:${cc}">${fmt(k.loc)}</b></span>`;
+  } else {
+    const k = candles[DAYS - 1];
+    ohlcEl.innerHTML =
+      `<b>2026/08/07</b>` +
+      `<span>开:<b>${fmt(Math.round(k.o))}</b></span>` +
+      `<span>收:<b style="color:var(--down-bright)">${fmt(Math.round(k.c))}</b></span>` +
+      `<span style="color:var(--down-bright)">-8.01%</span>` +
+      `<span>代码量:<b style="color:var(--down-bright)">${fmt(k.loc)}</b></span>`;
+  }
+}
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  const padL = 52, padR = 12;
+  const slot = (r.width - padL - padR) / DAYS;
+  const i = Math.floor((e.clientX - r.left - padL) / slot);
+  const nh = i >= 0 && i < DAYS ? i : -1;
+  if (nh !== hover) { hover = nh; draw(); }
+});
+canvas.addEventListener('mouseleave', () => { hover = -1; draw(); });
+
+new ResizeObserver(() => draw()).observe(canvas.parentElement);
+draw();
+setInterval(() => { pulse = !pulse; draw(); }, 900);
+</script>
+</body>
+</html>
