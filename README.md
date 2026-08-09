@@ -1,4 +1,4 @@
-# dsh-terminal
+# 同花顺harness
 
 DSH 前端占位仓库（placeholder）。
 
