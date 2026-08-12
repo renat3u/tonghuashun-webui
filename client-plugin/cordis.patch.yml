@@ -1,0 +1,6 @@
+# dsh bundle patch: inserts this plugin into a profile's layer stack.
+# 配合 deploy/web-terminal.patch.yml（禁用默认 web UI 行）后，
+# 本插件在浏览器端注册 'root' 槽，终端界面替换默认 web 界面。
+- insert:
+    - id: client-tonghuashun
+      name: '@deepseek-ai/dsh-client-tonghuashun'

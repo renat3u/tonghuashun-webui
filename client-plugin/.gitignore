@@ -1,0 +1,5 @@
+lib/
+node_modules/
+.npm-cache/
+*.log
+src/client/styles.generated.ts

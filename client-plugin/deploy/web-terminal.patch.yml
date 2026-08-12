@@ -1,0 +1,65 @@
+# 终端界面替换默认 web UI 的 profile overlay（针对 20260812 快照的行 id 集合）。
+#
+# 用法（安装 @deepseek-ai/dsh-client-tonghuashun 之后）：
+#   1. 把这些行合并进 profile 的用户层 patch（~/.dsh/profiles/web/cordis.patch.yml），
+#      或启动时叠加：pnpm dsh --profile web --patch "<repo>/client-plugin/deploy/web-terminal.patch.yml"
+#   2. 重启（pnpm dsh web）—— 终端界面注册 'root' 槽，默认 web UI 行被禁用。
+#
+# 保留的基础设施行：connection / api-remotes / client-runtime / modules / webserver 等
+# （外壳渲染 root 所需），本 overlay 只禁用注册进默认布局槽位的 UI 行。
+# 快照升级后若 web-app 的 UI 行 id 变化，用 `pnpm dsh --profile web --dump-config` 核对并同步。
+
+- id: ui-layout
+  disabled: true
+- id: ui-sidebar
+  disabled: true
+- id: ui-conversation
+  disabled: true
+- id: ui-tool
+  disabled: true
+- id: ui-trajectory
+  disabled: true
+- id: ui-workspace
+  disabled: true
+- id: ui-workflow-run
+  disabled: true
+- id: ui-deliverables
+  disabled: true
+- id: ui-settings
+  disabled: true
+- id: ui-settings-general
+  disabled: true
+- id: ui-settings-models
+  disabled: true
+- id: ui-settings-plugin-inventory
+  disabled: true
+- id: ui-settings-plugins
+  disabled: true
+- id: ui-commands
+  disabled: true
+- id: ui-input-trigger
+  disabled: true
+- id: ui-message-feedback
+  disabled: true
+- id: ui-jobs
+  disabled: true
+- id: ui-skill
+  disabled: true
+- id: ui-subagent
+  disabled: true
+- id: ui-goal
+  disabled: true
+- id: ui-model-selection
+  disabled: true
+- id: ui-permission
+  disabled: true
+- id: ui-agent-preset
+  disabled: true
+- id: ui-plan
+  disabled: true
+- id: ui-user-questions
+  disabled: true
+- id: ui-theme
+  disabled: true
+- id: locale
+  disabled: true

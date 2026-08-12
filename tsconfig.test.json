@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "outDir": ".test-dist",
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": ["client-plugin/src/lib/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["client-plugin/src/lib/useMarketEngine.ts"]
+}

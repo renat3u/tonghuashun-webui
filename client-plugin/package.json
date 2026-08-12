@@ -1,0 +1,55 @@
+{
+  "name": "@deepseek-ai/dsh-client-tonghuashun",
+  "version": "0.1.0",
+  "private": true,
+  "description": "同花顺harness 终端界面（DSH 客户端插件）：注入 dsh web 外壳，注册 'root' 槽替换默认界面",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build:styles": "node scripts/gen-styles.mjs",
+    "build": "npm run build:styles && tsc -p tsconfig.json && tsdown",
+    "typecheck": "npm run build:styles && tsc -p tsconfig.json --noEmit",
+    "smoke:bundle": "node scripts/smoke-bundle.mjs"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "tsdown": "^0.22.2",
+    "typescript": "~5.7.3"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "src",
+    "cordis.patch.yml"
+  ]
+}

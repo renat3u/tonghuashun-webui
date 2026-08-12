@@ -1,0 +1,30 @@
+{
+  "name": "tonghuashun-harness",
+  "private": true,
+  "version": "0.1.0",
+  "description": "同花顺风格股票终端 + AI Agent 工作区融合的 DeepSeek Harness (DSH) 终端式前端",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none \".test-dist/tests/*.test.js\"",
+    "test:watch": "tsc -p tsconfig.test.json --watch"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.6.3",
+    "vite": "^6.0.5"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@deepseek-ai/dsh-tonghuashun-meter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "同花顺harness 数据插件（bundle）：收集、记录并聚合 DSH 会话的 Token 消耗与工具调用，供终端式前端消费",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none \".test-dist/tests/*.spec.js\"",
+    "smoke:real-session": "node scripts/smoke-real-session.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "~5.7.3"
+  }
+}
