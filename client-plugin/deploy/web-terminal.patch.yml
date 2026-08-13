@@ -1,18 +1,20 @@
-# 终端界面替换默认 web UI 的 profile overlay（20260812 快照，v2）。
+# 终端界面替换默认 web UI 的 profile overlay（v3，rc.6 行 id 已核对）。
 #
-# 0812 组合模型：外壳伪条目 dsh-client-app-shell 注入 slots+sessions+layout 后
-# 渲染 'root'。因此：
-#   - ui-layout 被禁用（root + layout 由 @deepseek-ai/dsh-client-tonghuashun 接管）；
+# 组合模型：外壳伪条目 @deepseek-ai/dsh-client-app-shell 注入 slots+sessions+layout 后
+# 渲染 root；root 槽 single 先到先得。本 overlay 禁掉默认 UI 行后由
+# @deepseek-ai/dsh-client-tonghuashun 接管（其 apply 自供 layout 占位服务，
+# 因此 ui-layout 必须禁用，否则 layout 服务重复注册导致插件加载失败）。
 #   - ui-theme / locale / ui-settings 保持启用（纯服务提供者，inject=[]，
 #     不注册槽位；settingsScope 由 ui-settings 提供，禁用会卡 boot）；
-#   - session-log-download 禁用（其客户端半注入默认 UI 的服务）。
+#   - session-log-download 禁用（其客户端半注入默认 UI 的服务）；
+#   - ui-cordis（rc.6 新增）禁用：它依赖 ui-input-trigger 的 inputTriggers
+#     服务，而 ui-input-trigger 被禁后它永远 pending，会触发 web boot 审计报错。
 #
 # 用法（安装 @deepseek-ai/dsh-client-tonghuashun 之后）：
-#   1. 把这些行合并进 profile 的用户层 patch（~/.dsh/profiles/web/cordis.patch.yml），
-#      或启动时叠加：pnpm dsh --profile web --patch "<repo>/client-plugin/deploy/web-terminal.patch.yml"
-#   2. 重启（pnpm dsh web）—— 终端界面注册 'root' 槽，默认 web UI 行被禁用。
+#   1. 把这些行合并进 profile 的用户层 patch（~/.dsh/profiles/<p>/cordis.patch.yml），
+#   2. 重启 dsh web —— 终端界面注册 'root' 槽，默认 web UI 行被禁用。
 #
-# 快照升级后若 web-app 的 UI 行 id 变化，用 `pnpm dsh --profile web --dump-config` 核对并同步。
+# 快照升级后若 web-app 的 UI 行 id 变化，用 --dump-config 核对并同步。
 
 - id: ui-layout
   disabled: true
@@ -62,6 +64,8 @@
 - id: ui-plan
   disabled: true
 - id: ui-user-questions
+  disabled: true
+- id: ui-cordis
   disabled: true
 - id: session-log-download
   disabled: true
