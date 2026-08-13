@@ -15,7 +15,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+// Type-only: resolves the webServer Context declaration from dsh-host-webserver.
+import type {} from '@deepseek-ai/dsh-host-webserver'
 import { UsageAggregator } from './aggregate.js'
 import { foldSession, type FoldCursor } from './fold.js'
 import { createStore, resolveDataDir } from './store.js'
@@ -30,20 +31,7 @@ export interface Config {
   dataDir?: string
 }
 
-/** Structural subset of the dsh-host-webserver service the endpoint needs. */
-interface WebServerLike {
-  register(route: {
-    kind: 'exact' | 'prefix'
-    path: string
-    handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
-  }): () => void
-}
-
 declare module '@deepseek-ai/cordis' {
-  interface Context {
-    /** Provided by the dsh web composition; absent in headless profiles. */
-    webServer: WebServerLike
-  }
   interface Events {
     /** Emitted when a session's durable log grows (dsh session bus). */
     'session/event'(session: MeterSession): void
@@ -55,6 +43,7 @@ export function apply(ctx: Context, config: Config = {}): () => void {
   const store = createStore(dataDir, (message, cause) => ctx.logger.warn(message, cause))
   const aggregator = new UsageAggregator()
   const cursors = new WeakMap<object, FoldCursor>()
+  ctx.logger.info(`tonghuashun-meter: loaded, dataDir=${dataDir}`)
 
   // Boot: merge persisted day aggregates back so the day series survives restarts.
   void store.loadDays().then((days) => {
@@ -82,26 +71,30 @@ export function apply(ctx: Context, config: Config = {}): () => void {
   })
 
   // Web composition: serve the snapshot the terminal frontend consumes.
-  const webServer = ctx.get('webServer')
-  if (webServer !== undefined) {
-    const disposeRoute = webServer.register({
-      kind: 'exact',
-      path: '/tonghuashun/snapshot',
-      handler: (req, res) => {
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-          res.statusCode = 405
-          res.setHeader('allow', 'GET, HEAD')
-          res.end()
-          return
-        }
-        res.statusCode = 200
-        res.setHeader('content-type', 'application/json; charset=utf-8')
-        res.setHeader('cache-control', 'no-store')
-        res.end(JSON.stringify(aggregator.snapshot(Date.now())))
-      },
-    })
-    ctx.effect(() => () => disposeRoute(), 'tonghuashun-meter: /tonghuashun/snapshot route')
-  }
+  // Conditional injection waits for the webServer service when it exists
+  // (ordering-independent) and never activates in headless compositions.
+  ctx.inject(['webServer'], (c) => {
+    c.effect(
+      () => c.webServer.register({
+        kind: 'exact',
+        path: '/tonghuashun/snapshot',
+        handler: (req, res) => {
+          if (req.method !== 'GET' && req.method !== 'HEAD') {
+            res.statusCode = 405
+            res.setHeader('allow', 'GET, HEAD')
+            res.end()
+            return
+          }
+          res.statusCode = 200
+          res.setHeader('content-type', 'application/json; charset=utf-8')
+          res.setHeader('cache-control', 'no-store')
+          res.end(JSON.stringify(aggregator.snapshot(Date.now())))
+        },
+      }),
+      'tonghuashun-meter: /tonghuashun/snapshot route',
+    )
+    c.logger.info('tonghuashun-meter: /tonghuashun/snapshot route registered')
+  })
 
   return () => {
     disposeEvent()

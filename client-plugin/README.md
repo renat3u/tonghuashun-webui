@@ -36,7 +36,12 @@ pnpm dsh --profile web --patch "<repo>/client-plugin/deploy/web-terminal.patch.y
 ```
 
 > overlay 只禁用注册进默认布局槽位的 UI 行；connection / api-remotes /
-> client-runtime / modules 等基础设施行保留（外壳渲染 'root' 需要）。
+> client-runtime / modules / webserver 等基础设施行保留。
+> 0812 快照实测确认的启用/禁用边界：
+>   - 保留 ui-theme / locale / **ui-settings**（纯服务提供者：theme、i18n、
+>     settingsScope；ui-settings 的 inject=[] 且不注册槽位，禁了会卡 boot 激活门）；
+>   - 禁用 session-log-download（其客户端半注入默认 UI 的服务）；
+>   - 本插件提供 layout 占位服务（app-shell 激活门），注册 'root'。
 > 上游 web-app 新增 UI 行时需同步补进 overlay（已知维护点，见 Limitations）。
 
 ## 验证

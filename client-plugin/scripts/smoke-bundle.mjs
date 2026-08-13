@@ -53,11 +53,18 @@ const plugin = loaded.factory(requireStub)
 if (plugin.inject.join(',') !== 'slots') throw new Error(`unexpected inject: ${JSON.stringify(plugin.inject)}`)
 
 const registrations = []
+const provided = []
 const effects = []
 const ctx = {
   slots: {
     register(options, component) {
       registrations.push({ options, component })
+      return () => {}
+    },
+  },
+  reflect: {
+    provide(name, value) {
+      provided.push({ name, value })
       return () => {}
     },
   },
@@ -87,5 +94,7 @@ console.log(`bundle id: ${loaded.id}`)
 console.log(`inject: ${plugin.inject}`)
 console.log(`effects: ${JSON.stringify(effects)}`)
 console.log(`registration: slot=${options.name} children=${JSON.stringify(options.children)}`)
+console.log('provided services:', provided.map(p => p.name).join(', ') || '(none)')
+if (!provided.some(p => p.name === 'layout')) throw new Error('expected layout placeholder service')
 console.log(`SSR html length: ${html.length}`)
 console.log('SMOKE OK')

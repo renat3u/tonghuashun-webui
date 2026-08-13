@@ -1,9 +1,10 @@
 /**
  * 浏览器半：样式注入 + 'root' 槽注册。
  *
- * 'root' 由外壳（dsh-client-runtime）声明为唯一先验槽；默认组合里
- * ui-layout 已注册它，因此本插件必须配合 deploy/web-terminal.patch.yml
- * 禁用默认 web UI 行（见包 README 的安装步骤）。
+ * 'root' 由外壳（dsh-client-runtime）声明为唯一先验槽；0812 快照里外壳伪条目
+ * dsh-client-app-shell 注入 slots+sessions+layout 后才渲染 root，因此本插件在
+ * 禁用 ui-layout 的部署中同时提供 layout 占位服务，并配合
+ * deploy/web-terminal.patch.yml 禁用默认 web UI 行（见包 README 的安装步骤）。
  */
 import type { ClientContext } from '../contract.js'
 import { TERMINAL_CSS } from './styles.generated.js'
@@ -27,6 +28,15 @@ export function apply(ctx: ClientContext): void {
     tag.textContent = TERMINAL_CSS
     document.head.appendChild(tag)
   }
+
+  // 提供 layout 占位服务：满足 app-shell 的激活门（sessions/slots 来自
+  // runtime；layout 原由 ui-layout 提供，本部署已将其禁用）。
+  ctx.effect(() => {
+    const disposeLayout = ctx.reflect.provide('layout', {})
+    return () => {
+      void disposeLayout()
+    }
+  }, 'client-tonghuashun: layout placeholder')
 
   ctx.effect(
     () => ctx.slots.register(

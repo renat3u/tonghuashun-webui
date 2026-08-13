@@ -18,7 +18,8 @@
     "declarationDir": "lib/types",
     "baseUrl": ".",
     "paths": {
-      "@deepseek-ai/cordis": ["../../test-renat3u/vendor/cordis/lib/types/index.d.ts"]
+      "@deepseek-ai/cordis": ["../../new/test-renat3u/vendor/cordis/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-host-webserver": ["../../new/test-renat3u/packages/host/webserver/lib/types/index.d.ts"]
     }
   },
   "include": ["src"]
