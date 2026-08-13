@@ -83,15 +83,15 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
         </div>
         <div className="cell">
           <span className="k">代码量</span>
-          <span className="v">{fmt(instrument.locTotal)}</span>
+          <span className="v">{engine.live ? '\u2014' : fmt(instrument.locTotal)}</span>
         </div>
         <div className="cell">
           <span className="k">变更率</span>
-          <span className="v">{fmtPct(instrument.changeRate)}</span>
+          <span className="v">{engine.live ? '\u2014' : fmtPct(instrument.changeRate)}</span>
         </div>
         <div className="cell">
           <span className="k">上下文(TTM)</span>
-          <span className="v">{instrument.contextTtm.toFixed(2)}k</span>
+          <span className="v">{engine.live ? '\u2014' : `${instrument.contextTtm.toFixed(2)}k`}</span>
         </div>
         <div className="cell">
           <span className="k">总Token</span>

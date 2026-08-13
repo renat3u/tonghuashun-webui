@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TopBar } from './components/TopBar'
 import { Rail } from './components/Rail'
-import { ChatPanel } from './components/ChatPanel'
 import { KLineChart } from './components/KLineChart'
 import { QuotePanel } from './components/QuotePanel'
 import { StatusBar } from './components/StatusBar'
-import { useMarketEngine } from './lib/useMarketEngine'
+import { useMarketEngine, useSnapshotPoller } from './lib/useMarketEngine'
 import { isLiveBridge } from './bridge'
+import type { ChatOwnerProps, SessionListStateLike, SnapshotSelectorHook } from './contract'
 
 /** 图表高度（占中栏百分比）的拖动边界与默认值。 */
 const CHART_MIN_PCT = 16
@@ -24,20 +24,49 @@ function readSavedChartPct(): number {
   }
 }
 
-export default function App() {
+export interface AppProps {
+  /** 框架 useSessions 座位（root 全局 seat，经 TerminalRoot 下传）。 */
+  useSessions: SnapshotSelectorHook<SessionListStateLike>
+  /** 打开指定会话（root inject 面回调）。 */
+  openSession: (id: string) => void
+  /** 新建会话（root inject 面回调）。 */
+  newSession: () => void
+  /** 渲染 ChatPanel 槽位（TerminalRoot 的 renderSlot 绑定）。 */
+  renderChat: (owner: ChatOwnerProps) => ReactNode
+}
+
+export default function App({ useSessions, openSession, newSession, renderChat }: AppProps) {
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
   const [chartPct, setChartPct] = useState(readSavedChartPct)
   const centerRef = useRef<HTMLElement | null>(null)
-  const engine = useMarketEngine(selected)
+  const liveSnapshot = useSnapshotPoller()
+  const engine = useMarketEngine(selected, liveSnapshot)
+
+  // live 数据到达且当前选中不在真实工作区列表时，切到第一个工作区
+  useEffect(() => {
+    if (liveSnapshot === null) return
+    if (engine.static.instruments.some((x) => x.code === selected)) return
+    const first = engine.static.instruments[0]
+    if (first !== undefined) setSelected(first.code)
+  }, [liveSnapshot, engine.static, selected])
+
+  const sessionState = useSessions((s) => s)
+  const currentSummary = sessionState.current !== undefined ? sessionState.byId[sessionState.current] : undefined
+
+  // 始终解析到有效代码（live 数据到达而 selected 尚未切换的过渡帧不产生空序列）
+  const resolvedCode = useMemo(() => {
+    if (engine.static.instruments.some((x) => x.code === selected)) return selected
+    return engine.static.instruments[0]?.code ?? selected
+  }, [engine.static, selected])
 
   const instrument = useMemo(
-    () => engine.static.instruments.find((x) => x.code === selected) ?? engine.static.instruments[0],
-    [engine.static, selected],
+    () => engine.static.instruments.find((x) => x.code === resolvedCode) ?? engine.static.instruments[0],
+    [engine.static, resolvedCode],
   )
-  const daily = engine.static.daily.get(selected) ?? []
-  const intraday = engine.static.intraday.get(selected) ?? []
-  const fiveDay = engine.static.fiveDay.get(selected) ?? []
+  const daily = engine.static.daily.get(resolvedCode) ?? []
+  const intraday = engine.static.intraday.get(resolvedCode) ?? []
+  const fiveDay = engine.static.fiveDay.get(resolvedCode) ?? []
 
   // 图表高度记忆
   useEffect(() => {
@@ -73,11 +102,15 @@ export default function App() {
 
   return (
     <>
-      <TopBar engine={engine} onSelect={setSelected} />
+      <TopBar engine={engine} onSelect={setSelected} sessions={sessionState} onOpenSession={openSession} onNewSession={newSession} />
       <div className="main">
         <Rail engine={engine} selected={selected} onSelect={setSelected} />
         <section className="center" ref={centerRef}>
-          <ChatPanel selectedName={instrument.name} />
+          {renderChat({
+            selectedName: instrument.name,
+            sessionTitle: currentSummary?.title ?? currentSummary?.displayTitle,
+            sessionCwd: currentSummary?.cwd,
+          })}
           <div
             className="chart-resizer"
             onPointerDown={startChartResize}
@@ -87,7 +120,7 @@ export default function App() {
             <span className="grip" />
           </div>
           <KLineChart
-            code={selected}
+            code={resolvedCode}
             daily={daily}
             intraday={intraday}
             fiveDay={fiveDay}
@@ -110,7 +143,9 @@ export default function App() {
         />
       </div>
       <StatusBar engine={engine} />
-      {!isLiveBridge() && <div className="demo-badge">demo · mock market</div>}
+      {liveSnapshot === null && (
+        <div className="demo-badge">{isLiveBridge() ? '正在连接数据…' : 'demo · mock market'}</div>
+      )}
     </>
   )
 }

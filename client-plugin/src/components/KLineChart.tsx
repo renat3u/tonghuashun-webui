@@ -142,6 +142,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     // 信息条
     if (series.kind === 'candle') {
       const n = series.candles.length
+      if (n === 0) return
       const idx = hover >= 0 && hover < n ? hover : n - 1
       const k = series.candles[idx]
       const chg = (k.c - k.o) / k.o * 100
@@ -298,6 +299,7 @@ interface CandleViewOpts {
 function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
   const { W, padL, padR, padT, mainH, volTop, volH, plotW, candles, crash, pulse, hover, prevToken } = o
   const n = candles.length
+  if (n === 0) return
   const slot = plotW / n
   const bw = Math.max(2, slot * 0.62)
   const X = (i: number) => padL + i * slot + slot / 2

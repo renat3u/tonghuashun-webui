@@ -1,7 +1,7 @@
 /**
  * Bundle smoke：模拟 dsh 外壳的模块装载器，加载 lib/client.js 闭包工厂，
  * 用真实 react/react-dom（根 node_modules）驱动 apply 与一次 SSR 渲染，
- * 证明：注册调用落在 'root' 槽、组件树可渲染、外部依赖无泄漏。
+ * 证明：root 注册 + terminal.chat 子槽声明与注册、组件树可渲染、外部依赖无泄漏。
  *
  * 前置：npm run build
  */
@@ -50,17 +50,53 @@ const requireStub = (specifier) => {
 }
 
 const plugin = loaded.factory(requireStub)
-if (plugin.inject.join(',') !== 'slots') throw new Error(`unexpected inject: ${JSON.stringify(plugin.inject)}`)
+if (plugin.inject.join(',') !== 'slots,sessions,workspaces,conversationEvents,conversationViews') {
+  throw new Error(`unexpected inject: ${JSON.stringify(plugin.inject)}`)
+}
 
 const registrations = []
 const provided = []
 const effects = []
+const eventDefinitions = []
+const viewDefinitions = []
+const emptyList = {
+  getSnapshot: () => ({ ids: [], byId: {}, current: undefined, phase: 'ready' }),
+  subscribe: () => () => {},
+}
 const ctx = {
   slots: {
     register(options, component) {
       registrations.push({ options, component })
       return () => {}
     },
+    inject(_key, callback) {
+      callback()
+      return () => {}
+    },
+  },
+  conversationEvents: {
+    register(definition) {
+      eventDefinitions.push(definition)
+      return () => {}
+    },
+  },
+  conversationViews: {
+    register(definition) {
+      viewDefinitions.push(definition)
+      return () => {}
+    },
+  },
+  sessions: {
+    list: emptyList,
+    open() {},
+    clear() {},
+    binding() {
+      return undefined
+    },
+  },
+  workspaces: {
+    list: emptyList,
+    startSession() {},
   },
   reflect: {
     provide(name, value) {
@@ -78,14 +114,35 @@ const ctx = {
 
 plugin.apply(ctx)
 
-if (registrations.length !== 1) throw new Error(`expected 1 registration, got ${registrations.length}`)
-const { options, component } = registrations[0]
-if (options.name !== 'root') throw new Error(`expected root slot, got ${options.name}`)
+if (registrations.length !== 2) throw new Error(`expected 2 registrations, got ${registrations.length}`)
+const rootEntry = registrations.find((r) => r.options.name === 'root')
+const chatEntry = registrations.find((r) => r.options.name === 'terminal.chat')
+if (!rootEntry) throw new Error('missing root registration')
+if (!chatEntry) throw new Error('missing terminal.chat registration')
+const chatSpec = rootEntry.options.children?.['terminal.chat']
+if (!chatSpec || chatSpec.kind !== 'single' || chatSpec.scope !== 'session-maybe') {
+  throw new Error(`unexpected terminal.chat spec: ${JSON.stringify(chatSpec)}`)
+}
+if (!provided.some((p) => p.name === 'layout')) throw new Error('expected layout placeholder service')
 
-// SSR 冒烟：初始渲染不应触碰 DOM/canvas（副作用都在 useEffect 里）
+// SSR 冒烟：用桩 props 组装 root 组件树（renderSlot -> ChatPanel + 其 inject 面）
 const { renderToString } = requireRoot('react-dom/server')
-const html = renderToString(component({}))
-const checks = ['DeepSeek Harness', '关注项目', '日K', '最近变更', '给 DeepSeek 发消息']
+const chatInject = chatEntry.options.inject?.(undefined) ?? {}
+const html = renderToString(
+  rootEntry.component({
+    useSessions: (sel) => sel({ ids: [], byId: {}, current: undefined, phase: 'ready' }),
+    renderSlot: (_key, owner) =>
+      chatEntry.component({
+        ...owner,
+        ...chatInject,
+        sessionId: undefined,
+        useSession: (sel) => sel(undefined),
+      }),
+    openSession: () => {},
+    newSession: () => {},
+  }),
+)
+const checks = ['DeepSeek Harness', '关注项目', '日K', '最近变更', '给 DeepSeek 发消息', '新建会话']
 for (const needle of checks) {
   if (!html.includes(needle)) throw new Error(`SSR output missing "${needle}"`)
 }
@@ -93,8 +150,12 @@ for (const needle of checks) {
 console.log(`bundle id: ${loaded.id}`)
 console.log(`inject: ${plugin.inject}`)
 console.log(`effects: ${JSON.stringify(effects)}`)
-console.log(`registration: slot=${options.name} children=${JSON.stringify(options.children)}`)
-console.log('provided services:', provided.map(p => p.name).join(', ') || '(none)')
-if (!provided.some(p => p.name === 'layout')) throw new Error('expected layout placeholder service')
+console.log(`registrations: ${registrations.map((r) => r.options.name).join(', ')}`)
+console.log(`conversation definitions: ${eventDefinitions.length} events + ${viewDefinitions.length} view`)
+if (eventDefinitions.length !== 5) throw new Error(`expected 5 conversation definitions, got ${eventDefinitions.length}`)
+if (viewDefinitions.length !== 1 || viewDefinitions[0].target !== 'chat') {
+  throw new Error(`expected 1 chat view definition, got ${JSON.stringify(viewDefinitions)}`)
+}
+console.log('provided services:', provided.map((p) => p.name).join(', ') || '(none)')
 console.log(`SSR html length: ${html.length}`)
 console.log('SMOKE OK')

@@ -2,19 +2,27 @@ import { useMemo, useRef, useState } from 'react'
 import { fmt, fmtPct, dirClass } from '../lib/format'
 import type { MarketEngine } from '../lib/useMarketEngine'
 import type { Instrument } from '../lib/market'
+import type { SessionListStateLike } from '../contract'
 import { Icon } from './icons'
 
 interface Props {
   engine: MarketEngine
   onSelect: (code: string) => void
+  /** 框架 useSessions 快照（会话下拉数据源）。 */
+  sessions: SessionListStateLike
+  /** 打开指定会话。 */
+  onOpenSession: (id: string) => void
+  /** 新建会话。 */
+  onNewSession: () => void
 }
 
 const ICON_ACTIONS = ['monitor', 'clock', 'user'] as const
 
-export function TopBar({ engine, onSelect }: Props) {
+export function TopBar({ engine, onSelect, sessions, onOpenSession, onNewSession }: Props) {
   const [q, setQ] = useState('')
   const [focused, setFocused] = useState(false)
   const [selIdx, setSelIdx] = useState(0)
+  const [sessOpen, setSessOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
 
   const matches = useMemo(() => {
@@ -25,6 +33,13 @@ export function TopBar({ engine, onSelect }: Props) {
       .filter((x) => x.name.toLowerCase().includes(kw) || x.code.toLowerCase().includes(kw) || x.name.includes(kw))
       .slice(0, 6)
   }, [q, engine.static])
+
+  const sessionRows = useMemo(
+    () => [...sessions.ids].reverse().map((id) => sessions.byId[id]).filter((row) => row !== undefined),
+    [sessions],
+  )
+  const currentRow = sessions.current !== undefined ? sessions.byId[sessions.current] : undefined
+  const currentLabel = currentRow?.displayTitle ?? '选择会话'
 
   const pick = (ins: Instrument) => {
     onSelect(ins.code)
@@ -113,6 +128,42 @@ export function TopBar({ engine, onSelect }: Props) {
                 </div>
               )
             })}
+          </div>
+        )}
+      </div>
+      <div className="sess-switch">
+        <button className="sess-btn" title="切换会话" onClick={() => setSessOpen((o) => !o)}>
+          <Icon name="assistant" size={12} />
+          {currentLabel}
+          {currentRow?.running && <span className="sess-run" title="运行中" />}
+          <Icon name="chevronDown" size={9} />
+        </button>
+        {sessOpen && (
+          <div className="sess-menu">
+            <button
+              className="sess-new"
+              onClick={() => {
+                onNewSession()
+                setSessOpen(false)
+              }}
+            >
+              ＋ 新建会话
+            </button>
+            {sessionRows.length === 0 && <div className="sess-empty">暂无会话</div>}
+            {sessionRows.map((row) => (
+              <button
+                key={row.id}
+                className={`sess-row${row.id === sessions.current ? ' sel' : ''}`}
+                title={row.id}
+                onClick={() => {
+                  onOpenSession(row.id)
+                  setSessOpen(false)
+                }}
+              >
+                <span className="sess-title">{row.displayTitle}</span>
+                {row.running && <span className="sess-run" title="运行中" />}
+              </button>
+            ))}
           </div>
         )}
       </div>

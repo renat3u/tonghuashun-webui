@@ -28,7 +28,7 @@ export function AsciiWelcome({ directory, sessionId, model, version }: Props) {
       <div className="info">
         <span>
           <span className="k">Directory: </span>
-          <span className="v">~/tonghuashun-harness</span>
+          <span className="v">{directory}</span>
         </span>
         <span>
           <span className="k">Session: </span>

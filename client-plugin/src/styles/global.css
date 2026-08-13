@@ -1007,6 +1007,163 @@ button {
   cursor: default;
 }
 
+
+
+/* ---------- P0 对话接入：会话切换 / 发送状态 / 错误条 ---------- */
+.sess-switch {
+  position: relative;
+  margin-right: 2px;
+}
+
+.sess-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.sess-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sess-run {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--up-bright);
+  box-shadow: 0 0 4px var(--up-bright);
+  flex: 0 0 auto;
+  animation: sessPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes sessPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.sess-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 248px;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sess-new {
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: none;
+  border: 1px dashed var(--border);
+  color: var(--link);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.sess-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.sess-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sess-row.sel {
+  background: var(--accent);
+}
+
+.sess-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sess-empty {
+  padding: 8px;
+  color: var(--faint);
+}
+
+.model-static {
+  color: var(--dim);
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.composer .send.stop {
+  background: var(--accent);
+}
+
+.stop-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #fff;
+  display: inline-block;
+}
+
+.send-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 12px 6px;
+  padding: 5px 10px;
+  border: 1px solid rgba(230, 69, 69, 0.45);
+  border-radius: 6px;
+  background: rgba(230, 69, 69, 0.12);
+  color: #ffb3b3;
+  font-size: 11px;
+}
+
+.send-error button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+}
+
 /* 图表高度分隔条（拖动调节图表区高度，双击复位） */
 .chart-resizer {
   flex: 0 0 7px;

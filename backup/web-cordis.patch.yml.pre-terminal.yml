@@ -1,0 +1,11 @@
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# a top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+
+# dsh-web-archive: fold non-body tool/think cards into "Deep Sleeping..." chips.
+# Mounted here (user layer, hot-reloaded) rather than as a bundle layer so it
+# activates without restarting the running dsh web server; the package resolves
+# through the healed $DSH_HOME/profiles/node_modules fallback link.
+- insert:
+    - id: dsh-web-archive
+      name: dsh-web-archive
