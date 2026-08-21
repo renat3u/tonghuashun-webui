@@ -133,6 +133,7 @@ const html = renderToString(
       }),
     openSession: () => {},
     newSession: () => {},
+    openPath: () => Promise.resolve(),
   }),
 )
 const checks = ['DeepSeek Harness', '关注项目', '日K', '最近变更', '给 DeepSeek 发消息', '新建会话']

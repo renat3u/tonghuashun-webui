@@ -82,7 +82,7 @@ function makeChatOps(ctx: ClientContext, boundSessionId: string | undefined): Ch
   }
 }
 
-/** root inject 面：会话切换/新建回调（TerminalRoot → TopBar 会话下拉）。 */
+/** root inject 面：会话切换/新建/打开路径回调（TerminalRoot → TopBar 会话下拉）。 */
 function makeRootOps(ctx: ClientContext): RootOps {
   return {
     openSession(id) {
@@ -90,6 +90,9 @@ function makeRootOps(ctx: ClientContext): RootOps {
     },
     newSession() {
       ctx.workspaces.startSession()
+    },
+    openPath(path) {
+      return ctx.workspaces.openPath(path)
     },
   }
 }

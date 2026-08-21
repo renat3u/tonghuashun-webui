@@ -35,6 +35,8 @@ export interface AppProps {
   openSession: (id: string) => void
   /** 新建会话（root inject 面回调）。 */
   newSession: () => void
+  /** 用系统默认应用打开路径（root inject 面回调）。 */
+  openPath: (path: string) => Promise<void>
   /** 渲染 ChatPanel 槽位（TerminalRoot 的 renderSlot 绑定）。 */
   renderChat: (owner: ChatOwnerProps) => ReactNode
 }
@@ -87,7 +89,7 @@ const EMPTY_INSTRUMENT: Instrument = {
   seed: 0,
 }
 
-export default function App({ useSessions, useWorkspaces, openSession, newSession, renderChat }: AppProps) {
+export default function App({ useSessions, useWorkspaces, openSession, newSession, openPath, renderChat }: AppProps) {
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
@@ -237,6 +239,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
           gitTree={engine.static.gitTree.get(selected) ?? []}
           pinned={pinned}
           onTogglePin={() => setPinned((p) => !p)}
+          openPath={openPath}
         />
       </div>
       <StatusBar engine={engine} />

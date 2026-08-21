@@ -13,11 +13,13 @@ interface Props {
   gitTree: TreeRow[]
   pinned: boolean
   onTogglePin: () => void
+  /** 用系统默认应用打开路径（变更/文件树行点击）。 */
+  openPath?: (path: string) => Promise<void>
 }
 
 type PanelTab = 'changes' | 'tree' | 'flow'
 
-export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin }: Props) {
+export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, openPath }: Props) {
   const [tab, setTab] = useState<PanelTab>('changes')
   const [hideTape, setHideTape] = useState(false)
   const q = engine.quotes.get(instrument.code)
@@ -118,7 +120,14 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
       {tab === 'changes' && (
         <div className="changes">
           {changes.map((c, i) => (
-            <div key={`${c.time}-${i}`} className="change-row">
+            <div
+              key={`${c.time}-${i}`}
+              className="change-row"
+              style={openPath && c.path ? { cursor: 'pointer' } : undefined}
+              onClick={() => {
+                if (openPath && c.path) void openPath(c.path)
+              }}
+            >
               <span className="tm">{c.time}</span>
               <span className="path">
                 {c.path}
@@ -140,7 +149,14 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
       {tab === 'tree' && (
         <div className="changes">
           {gitTree.map((t, i) => (
-            <div key={`${t.path}-${i}`} className="tree-row" style={{ paddingLeft: 14 + t.depth * 14 }}>
+            <div
+              key={`${t.path}-${i}`}
+              className="tree-row"
+              style={{ paddingLeft: 14 + t.depth * 14, ...(openPath && t.path ? { cursor: 'pointer' } : {}) }}
+              onClick={() => {
+                if (openPath && t.path) void openPath(t.path)
+              }}
+            >
               <span className="path">
                 {t.depth > 0 ? '└ ' : '▸ '}
                 {t.path}

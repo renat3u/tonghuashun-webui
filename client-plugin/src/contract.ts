@@ -254,6 +254,7 @@ export interface WorkspaceListStateLike {
 export interface IWorkspacesLike {
   list: ObservableSnapshotLike<WorkspaceListStateLike>
   startSession(): void
+  openPath(path: string): Promise<void>
 }
 
 /** ChatPanel 注册项的 inject 面：纯回调，闭包持有 apply ctx。 */
@@ -277,6 +278,8 @@ export interface RootOps {
   openSession(id: string): void
   /** 新建会话。 */
   newSession(): void
+  /** 用系统默认应用打开一个路径（文件/目录）。 */
+  openPath(path: string): Promise<void>
 }
 
 /** ChatPanel 槽的 owner 面（TerminalRoot 经 renderSlot 下传）。 */
