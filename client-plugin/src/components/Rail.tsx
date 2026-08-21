@@ -13,6 +13,8 @@ interface Props {
   collapsed?: boolean
   /** 切换左栏折叠。 */
   onToggleCollapse?: () => void
+  /** 轻提示。 */
+  onNotice?: (message: string) => void
 }
 
 /** 导航：仅保留 DSH 主入口（其余为插件注入后的集成点） */
@@ -23,7 +25,7 @@ const NAV: { label: string; icon: IconName; active?: boolean; title: string }[] 
   { label: '设置', icon: 'gear', title: '打开设置界面（集成点）' },
 ]
 
-export function Rail({ engine, selected, onSelect, workspaceRows, collapsed = false, onToggleCollapse }: Props) {
+export function Rail({ engine, selected, onSelect, workspaceRows, collapsed = false, onToggleCollapse, onNotice }: Props) {
   const realRows = workspaceRows ?? []
   const watchList = realRows.length > 0
     ? realRows.map((row) => ({
@@ -64,7 +66,15 @@ export function Rail({ engine, selected, onSelect, workspaceRows, collapsed = fa
       </div>
       <nav className="nav">
         {NAV.map((item) => (
-          <button key={item.label} className={`nav-item${item.active ? ' active' : ''}`} title={item.title}>
+          <button
+            key={item.label}
+            className={`nav-item${item.active ? ' active' : ''}`}
+            title={item.title}
+            onClick={() => {
+              if (item.active) return
+              onNotice?.(`${item.label}入口：待接入 DSH 窗口（plan.md Phase 2）`)
+            }}
+          >
             <Icon name={item.icon} size={13} />
             {item.label}
           </button>

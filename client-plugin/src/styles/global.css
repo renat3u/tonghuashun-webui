@@ -1824,3 +1824,19 @@ button {
   padding: 3px 8px;
   pointer-events: none;
 }
+
+.ths-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: 80;
+  background: rgba(20, 26, 42, 0.95);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  border-radius: 8px;
+  padding: 8px 14px;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}

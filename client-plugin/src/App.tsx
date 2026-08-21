@@ -93,6 +93,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   const [chartPct, setChartPct] = useState(readSavedChartPct)
   const centerRef = useRef<HTMLElement | null>(null)
   const liveSnapshot = useSnapshotPoller()
@@ -182,6 +183,13 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  // 轻提示自动消失
+  useEffect(() => {
+    if (notice === null) return
+    const timer = setTimeout(() => setNotice(null), 2600)
+    return () => clearTimeout(timer)
+  }, [notice])
+
   /** 拖动分隔条调整图表高度（窗口级监听，越过画布/iframe 也不丢事件）。 */
   const startChartResize = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
@@ -209,7 +217,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     <>
       <TopBar engine={engine} onSelect={setSelected} sessions={sessionState} workspaceRows={workspaceRows} onOpenSession={openSession} onNewSession={newSession} />
       <div className="main">
-        <Rail engine={engine} selected={selected} onSelect={setSelected} workspaceRows={workspaceRows} collapsed={railCollapsed} onToggleCollapse={() => setRailCollapsed((v) => !v)} />
+        <Rail engine={engine} selected={selected} onSelect={setSelected} workspaceRows={workspaceRows} collapsed={railCollapsed} onToggleCollapse={() => setRailCollapsed((v) => !v)} onNotice={setNotice} />
         <section className="center" ref={centerRef}>
           {renderChat({
             selectedName: currentInstrument.name,
@@ -252,6 +260,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
       {liveSnapshot === null && (
         <div className="demo-badge">{isLiveBridge() ? '正在连接数据…' : 'demo · mock market'}</div>
       )}
+      {notice !== null && <div className="ths-toast">{notice}</div>}
     </>
   )
 }
