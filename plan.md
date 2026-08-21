@@ -28,11 +28,11 @@
 
 ### Phase 1：真实数据接入（P0）
 
-- [ ] 1.1 左栏关注项目改为真实 workspace 列表
+- [x] 1.1 左栏关注项目改为真实 workspace 列表
   - 使用 `useWorkspaces` / `useSessions` 提供真实工作区；
   - 结合 meter `snapshot.workspaces` 显示 Token/会话/工具调用；
-  - 无真实数据时显示空态，而不是模拟自选。
-- [ ] 1.2 右栏行情改为真实选中工作区数据
+  - 真实基线就绪且无工作区时显示空态。
+- [x] 1.2 右栏行情改为真实选中工作区数据
   - 当前选中 workspace 的今日/累计 Token、会话数、工具调用数；
   - 最近变更、git tree、token 流向优先使用真实 snapshot。
 - [x] 1.3 K 线数据源真实化
