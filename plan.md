@@ -87,9 +87,9 @@
 - [x] 4.1 五档盘口 = Harness 队列/工具/子代理
   - 已新增“盘口”页签，展示运行状态/会话/工具调用/关联会话；
   - pending queue、子代理、jobs 待补。
-- [ ] 4.2 分时成交真实化
-  - 每分钟 Token 消耗来自真实 snapshot；
-  - 点击成交行跳转对应 Trajectory 事件。
+- [x] 4.2 分时成交真实化
+  - 每分钟 Token 消耗来自真实 snapshot（有 live 数据时）；
+  - 点击成交行跳转 Trajectory 页签（已完成）。
 - [ ] 4.3 token 流向细化
   - 按模型/provider/工作区拆分；
   - 展示 input/output/cacheRead/cacheWrite/reasoning 五类。
