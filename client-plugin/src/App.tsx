@@ -152,9 +152,17 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
 
   const currentInstrument = instrument ?? EMPTY_INSTRUMENT
 
-  const daily = hasRealWorkspaces ? [] : (engine.static.daily.get(resolvedCode) ?? [])
-  const intraday = hasRealWorkspaces ? [] : (engine.static.intraday.get(resolvedCode) ?? [])
-  const fiveDay = hasRealWorkspaces ? [] : (engine.static.fiveDay.get(resolvedCode) ?? [])
+  // 真实工作区下：有 meter 快照时直接使用 live K 线；无快照时留空等待。
+  const hasLiveEngineData = engine.live && liveSnapshot !== null
+  const daily = hasRealWorkspaces
+    ? (hasLiveEngineData ? (engine.static.daily.get(resolvedCode) ?? []) : [])
+    : (engine.static.daily.get(resolvedCode) ?? [])
+  const intraday = hasRealWorkspaces
+    ? (hasLiveEngineData ? (engine.static.intraday.get(resolvedCode) ?? []) : [])
+    : (engine.static.intraday.get(resolvedCode) ?? [])
+  const fiveDay = hasRealWorkspaces
+    ? (hasLiveEngineData ? (engine.static.fiveDay.get(resolvedCode) ?? []) : [])
+    : (engine.static.fiveDay.get(resolvedCode) ?? [])
 
   // 图表高度记忆
   useEffect(() => {
