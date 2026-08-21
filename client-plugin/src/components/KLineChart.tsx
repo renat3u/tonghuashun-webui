@@ -33,6 +33,10 @@ interface Props {
   livePrice: number
   /** 引擎心跳，驱动分时视图刷新 */
   tick: number
+  /** 可叠加对比的标的列表。 */
+  overlayOptions?: { code: string; name: string }[]
+  /** 各标的日K数据，供叠加使用。 */
+  overlaySeries?: ReadonlyMap<string, Candle[]>
   /** 根容器样式（图表高度由中栏分隔条控制） */
   style?: CSSProperties
 }
@@ -159,7 +163,39 @@ function drawAnnotations(
   void padR
 }
 
-export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, style }: Props) {
+/** 绘制叠加标的的收盘线（演示级：独立缩放到主图区域）。 */
+function drawOverlayLine(
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    W: number; padL: number; padR: number; padT: number; mainH: number; plotW: number
+    candles: readonly Candle[]
+  },
+): void {
+  const { padL, padT, mainH, plotW, candles } = opts
+  if (candles.length === 0) return
+  const lo = Math.min(...candles.map((c) => c.l))
+  const hi = Math.max(...candles.map((c) => c.h))
+  const span = hi - lo || 1
+  const X = (i: number) => padL + (i / Math.max(1, candles.length - 1)) * plotW
+  const Y = (p: number) => padT + ((hi - p) / span) * mainH
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255,190,80,.85)'
+  ctx.lineWidth = 1.3
+  ctx.setLineDash([6, 4])
+  ctx.beginPath()
+  candles.forEach((c, i) => {
+    const x = X(i)
+    const y = Y(c.c)
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+  ctx.restore()
+  void opts.W
+  void opts.padR
+}
+
+export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, overlayOptions, overlaySeries, style }: Props) {
   const [mode, setMode] = useState<ChartMode>('daily')
   const [info, setInfo] = useState<Info | null>(null)
   const [pulse, setPulse] = useState(false)
@@ -170,6 +206,8 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false)
   const [drawMode, setDrawMode] = useState(false)
   const [tempPoint, setTempPoint] = useState<{ x: number; y: number } | null>(null)
+  const [overlayCode, setOverlayCode] = useState<string | null>(null)
+  const [overlayMenuOpen, setOverlayMenuOpen] = useState(false)
   const [drawLines, setDrawLines] = useState<DrawLine[]>(() => {
     try {
       const raw = localStorage.getItem(`ths.draw-lines.${code}`)
@@ -259,6 +297,8 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     return b === null ? null : `BOLL UP ${fmtToken(b.up)} · MID ${fmtToken(b.mid)} · LOW ${fmtToken(b.low)}`
   }, [indicator, daily])
 
+  const overlayDaily = overlayCode !== null ? overlaySeries?.get(overlayCode) : undefined
+
   const paint = () => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -309,6 +349,10 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       })
     }
 
+    if (overlayDaily !== undefined && overlayDaily.length > 0) {
+      drawOverlayLine(ctx, { W, padL, padR, padT, mainH, plotW, candles: overlayDaily })
+    }
+
     drawAnnotations(ctx, {
       W, padL, padR, padT, mainH, plotW,
       lines: drawLines,
@@ -337,7 +381,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   useEffect(() => {
     paint()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, crash, pulse, version, livePrice, zoom, pan])
+  }, [series, crash, pulse, version, livePrice, zoom, pan, overlayDaily])
 
   // 尺寸自适应（paintRef 每次渲染更新，避免闭包过期）
   const paintRef = useRef(paint)
@@ -475,10 +519,31 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
             前复权
             <Icon name="chevronDown" size={8} />
           </button>
-          <button title="叠加标的" onClick={() => setToolNotice('叠加：即将支持')}>
-            叠加
-            <Icon name="chevronDown" size={8} />
-          </button>
+          <div className="indicator-select">
+            <button title="叠加标的" onClick={() => setOverlayMenuOpen((o) => !o)}>
+              叠加{overlayCode !== null ? ' · 开' : ''}
+              <Icon name="chevronDown" size={8} />
+            </button>
+            {overlayMenuOpen && (
+              <div className="indicator-menu">
+                <button onClick={() => { setOverlayCode(null); setOverlayMenuOpen(false) }}>取消叠加</button>
+                {(overlayOptions ?? []).map((opt) => (
+                  <button
+                    key={opt.code}
+                    onClick={() => {
+                      setOverlayCode(opt.code)
+                      setOverlayMenuOpen(false)
+                    }}
+                  >
+                    {opt.name}
+                  </button>
+                ))}
+                {(overlayOptions ?? []).length === 0 && (
+                  <button onClick={() => { setOverlayMenuOpen(false); setToolNotice('暂无可用叠加标的') }}>暂无可用</button>
+                )}
+              </div>
+            )}
+          </div>
           <button
             title="画线工具"
             className={drawMode ? 'tool-active' : undefined}

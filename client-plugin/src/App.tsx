@@ -299,6 +299,10 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
             crash={selected === 'DSH001'}
             livePrice={engine.tape[0]?.tokens ?? currentInstrument.prevToken / 240}
             tick={engine.tick}
+            overlayOptions={hasRealWorkspaces
+              ? workspaceRows.filter((r) => r.code !== resolvedCode).map((r) => ({ code: r.code, name: r.name }))
+              : engine.static.instruments.filter((i) => i.code !== resolvedCode).map((i) => ({ code: i.code, name: i.name }))}
+            overlaySeries={engine.static.daily}
             style={{ flex: `0 0 ${chartPct.toFixed(2)}%` }}
           />
         </section>
