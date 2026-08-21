@@ -90,9 +90,9 @@
 - [x] 4.2 分时成交真实化
   - 每分钟 Token 消耗来自真实 snapshot（有 live 数据时）；
   - 点击成交行跳转 Trajectory 页签（已完成）。
-- [ ] 4.3 token 流向细化
-  - 按模型/provider/工作区拆分；
-  - 展示 input/output/cacheRead/cacheWrite/reasoning 五类。
+- [x] 4.3 token 流向细化
+  - 按模型拆分；
+  - 展示 input/output/cacheRead/cacheWrite/reasoning 五类（今日明细）。
 - [x] 4.4 最近变更/git tree 可点击
   - 点击打开文件/diff（已完成系统打开路径；diff 待补）；
   - 点击 commit 查看详情（待补）。
