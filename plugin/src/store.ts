@@ -23,6 +23,8 @@ export type WarnSink = (message: string, cause?: unknown) => void
 export interface Store {
   /** Load persisted day rows ([] when none exist yet). */
   loadDays(): Promise<DayStat[]>
+  /** Load the raw usage record log ([] when none exist yet). */
+  loadUsage(): Promise<UsageRecord[]>
   /** Append usage records to the record log. */
   appendUsage(records: UsageRecord[]): Promise<void>
   /** Schedule a debounced rewrite of the day aggregates. */
@@ -61,6 +63,23 @@ function parseDaysFile(text: string): DayStat[] {
   return parsed.days as DayStat[]
 }
 
+function parseUsageLines(text: string): UsageRecord[] {
+  const out: UsageRecord[] = []
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    try {
+      const record = JSON.parse(trimmed) as UsageRecord
+      if (typeof record === 'object' && record !== null && typeof record.ts === 'number' && typeof record.sessionId === 'string') {
+        out.push(record)
+      }
+    } catch {
+      // 单行损坏不拖垮启动：跳过该行，保留其余记录。
+    }
+  }
+  return out
+}
+
 export function createStore(dataDir: string, warn: WarnSink = () => {}): Store {
   const usagePath = join(dataDir, 'usage.jsonl')
   const daysPath = join(dataDir, 'days.json')
@@ -88,6 +107,17 @@ export function createStore(dataDir: string, warn: WarnSink = () => {}): Store {
         if (code !== 'ENOENT') warn('tonghuashun-meter: cannot read days.json, starting from empty history', error)
       }
       return days
+    },
+
+    async loadUsage() {
+      try {
+        const text = await readFile(usagePath, 'utf8')
+        return parseUsageLines(text)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code !== 'ENOENT') warn('tonghuashun-meter: cannot read usage.jsonl, starting from empty history', error)
+        return []
+      }
     },
 
     async appendUsage(records) {

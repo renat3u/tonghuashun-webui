@@ -221,6 +221,27 @@ export class UsageAggregator {
     }
   }
 
+  /**
+   * Merge only persisted tool-call / workspace-session counters after replaying
+   * `usage.jsonl`. Unlike {@link foldDay}, this does not add tokens again — the
+   * usage record log is the token source of truth when it exists.
+   */
+  foldDayToolCalls(day: DayStat): void {
+    const current = this.ensureDay(day.date)
+    current.toolCalls += day.toolCalls
+    for (const [cwd, count] of Object.entries(day.workspaceToolCalls)) {
+      current.workspaceToolCalls[cwd] = (current.workspaceToolCalls[cwd] ?? 0) + count
+      const sessions = day.workspaceSessions[cwd] ?? 0
+      const ws = this.workspaces.get(cwd)
+      if (ws === undefined) {
+        this.workspaces.set(cwd, { cwd, tokens: 0, sessions, toolCalls: count })
+      } else {
+        ws.sessions = Math.max(ws.sessions, sessions)
+        ws.toolCalls += count
+      }
+    }
+  }
+
   /** Persistable day rows, ascending by date. */
   dayRows(): DayStat[] {
     return [...this.days.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))

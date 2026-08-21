@@ -35,6 +35,26 @@ pnpm dsh --profile web --dump-config | grep tonghuashun
 > 20260812 快照起 cordis 全面改配为 `@deepseek-ai/cordis` 作用域名，裸 `cordis` 不再解析）；
 > 插件以 `link:` 安装，改源码 → 重构建 → 重启生效。
 
+## 历史回填（可选）
+
+实时采集只统计插件加载**之后**的事件。如需把安装前已有的会话历史也折叠进本地数据：
+
+```sh
+# 先构建 lib/
+cd plugin
+npm run build
+
+# 建议先停止正在运行的 DSH 实例，避免与实时写入冲突
+npm run backfill
+# 或 node scripts/backfill-sessions.mjs
+
+# 重新启动 DSH；插件启动时会回放 usage.jsonl，历史随即出现在快照中
+```
+
+回填脚本只扫描本机 `$DSH_HOME/sessions/`，写入 `$DSH_HOME/tonghuashun/`，并只输出聚合计数
+（会话日志数、记录数、工具调用数、Token 总量、日线/分钟线数量），不会输出会话 ID、
+工作区路径或模型名。详细指引见仓库根目录 `AGENT.md`。
+
 ## 数据契约
 
 `GET /tonghuashun/snapshot` → `application/json`（`cache-control: no-store`）：
@@ -47,16 +67,16 @@ pnpm dsh --profile web --dump-config | grep tonghuashun
     "date": "2026-08-13",
     "tokens": 39736102,
     "inputTokens": 0, "outputTokens": 0,
-    "byWorkspace": { "E:\\WSL": 39736102 },
-    "workspaceSessions": { "E:\\WSL": 1 },
-    "workspaceToolCalls": { "E:\\WSL": 261 },
-    "byModel": { "deepseek-v4-pro": 39736102 },
+    "byWorkspace": { "/work/example": 39736102 },
+    "workspaceSessions": { "/work/example": 1 },
+    "workspaceToolCalls": { "/work/example": 261 },
+    "byModel": { "example-model": 39736102 },
     "sessions": 1, "toolCalls": 261
   },
   "minuteSeries": [{ "minute": "00:07", "tokens": 982550, "inputTokens": 2508, "outputTokens": 3052 }],
   "daySeries":    [{ "date": "2026-08-13", "tokens": 39736102, "…": "…" }],
-  "workspaces":   [{ "cwd": "E:\\WSL", "tokens": 41123992, "sessions": 1, "toolCalls": 298 }],
-  "models":       [{ "model": "deepseek-v4-pro", "tokens": 41123992 }]
+  "workspaces":   [{ "cwd": "/work/example", "tokens": 41123992, "sessions": 1, "toolCalls": 298 }],
+  "models":       [{ "model": "example-model", "tokens": 41123992 }]
 }
 ```
 
@@ -66,15 +86,15 @@ pnpm dsh --profile web --dump-config | grep tonghuashun
 ## 采集语义（重要边界）
 
 - **增量采集**：插件只统计加载之后发生的事件。会话首次进入视野时游标从当前日志尾部开始，
-  因此重启不会重复计数，安装前的历史也**不会**回填；
+  因此重启不会重复计数；安装前的历史如需补录，请显式运行 `npm run backfill`；
 - **存储降级**：usage/days 文件不可写时仅告警并继续内存记账——计量插件不会拖垮 harness；
 - **usage.jsonl 每行**：`{ ts, sessionId, cwd?, provider?, model?, turn, step, inputTokens,
   outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens }`。
 
 ## 开发
 
-- `npm run build` / `npm test`（16 例，node:test）/ `npm run smoke:real-session`（解码
-  `~/.dsh/sessions/**/session.jsonl.zstd` 真实日志跑完整折叠，默认取最大会话，可传路径）；
+- `npm run build` / `npm test`（17 例，node:test）/ `npm run smoke:real-session`（解码
+  `$DSH_HOME/sessions/**/session.jsonl.zstd` 真实日志跑完整折叠，默认取最大会话，可传路径）；
 - 构建对 `@deepseek-ai/cordis` 的类型解析走 `tsconfig.json` 的 `paths` → 本机 DSH checkout 的
   `vendor/cordis/lib/types/index.d.ts`（TS ≥ 5.7 + `moduleResolution: bundler`，
   见 dsh-plugin-dev 档案坑 1）；换机器时改 paths 指向你的 checkout；
@@ -84,5 +104,5 @@ pnpm dsh --profile web --dump-config | grep tonghuashun
 
 - 尚未实现 client 半（slots 注册挂载终端 UI）——前端目前独立运行，经 `/tonghuashun/snapshot` 取数；
 - 「最近变更 / git tree」需要 git 事件源，当前 DSH 会话总线没有对应事件，暂未采集；
-- 历史回填（安装前的会话）未实现，需要时可在启动时遍历 `sessions/` 目录重放；
+- 历史回填已通过 `npm run backfill` 提供：显式、本地执行，只输出聚合计数，不写入仓库；
 - days.json 全量重写（防抖 200ms），文件规模远大于内存场景（百万级天记录）前无需分段。

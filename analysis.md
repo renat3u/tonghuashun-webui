@@ -1,7 +1,7 @@
 # 同花顺 Harness 终端：闪烁 + 分时/5日黑屏问题分析
 
-> 分析时间：基于 DSH `0.1.1-rc.1` + `ths011` 本地实例实测。
-> 复现方式：打开 `http://127.0.0.1:3091`，观察左栏/整体闪烁；点击 K 线“分时”或“5日”后黑屏。
+> 分析时间：基于 DSH `0.1.1-rc.1` 本地实例实测。
+> 复现方式：打开本地 DSH Web 实例（占位端口），观察左栏/整体闪烁；点击 K 线“分时”或“5日”后黑屏。
 
 ## 1. 现象
 
@@ -32,12 +32,12 @@
 2. **“有真实 workspace 时切换到第一个真实工作区” effect**
    - 当 `hasRealWorkspaces` 为真时，如果 `selected` 不在 `workspaceRows` 里，就把 `selected` 设为第一个真实工作区。
 
-当前测试实例存在真实 workspace（例如 `repos` / `WS738`），但 meter 快照为空：
+当前测试实例存在真实 workspace（例如 `workspace-a` / `WS###`），但 meter 快照为空：
 
 - `engine.static.instruments` 因为没有真实 meter 数据而回退到**模拟标的列表**；
-- 真实 workspace 的 code 是 `WS738`，不在模拟列表里；
+- 真实 workspace 的 code 是 `WS###`，不在模拟列表里；
 - 于是 effect 1 把 `selected` 改成模拟首标的；
-- 紧接着 effect 2 发现 `selected` 不在真实列表里，又改回 `WS738`；
+- 紧接着 effect 2 发现 `selected` 不在真实列表里，又改回 `WS###`；
 - 两个 effect 互相触发，形成无限“抢选中”循环，导致整页反复渲染、视觉上一直闪。
 
 ### 2.2 分时/5日黑屏：空数据数组没有做空数组保护
@@ -108,6 +108,7 @@
 2. **空数据图表状态**：已增加“等待真实行情/暂无数据”的图表空态。
 3. **线图空数据占位**：已在 `drawLineView` 中绘制“暂无分时/5日数据”文案 + 灰底。
 4. **回归测试**：已增加 `tests/chart.test.ts`，覆盖空数组不抛错、信息条取值、空态文案等场景。
+5. **历史回填与本地保存**：已新增 meter 历史回填脚本，并在文档中说明采集/保存/隐私边界，见第 8 节。
 
 ## 6. 接续改进的落地明细
 
@@ -157,3 +158,35 @@
 - `npm run typecheck`：通过。
 - `npm test`：51 个用例全部通过（原 45 + 新增 6）。
 - `npm run build`：通过，`dist/` 正常产出。
+
+## 8. 历史回填与数据本地化（新增）
+
+### 8.1 背景
+
+meter 插件默认是**增量采集**：只统计插件加载之后发生的 `assistant/message` usage 与
+`tool/call`，安装前的历史不会自动补录。为了让已有会话历史也能出现在终端中，同时保证数据
+只保存在本机，新增了显式的历史回填能力。
+
+### 8.2 实现
+
+- `plugin/scripts/backfill-sessions.mjs`：扫描 `$DSH_HOME/sessions/` 下的本地会话日志，
+  折叠为 usage 记录与工具调用计数，写入 `$DSH_HOME/tonghuashun/usage.jsonl` 与
+  `days.json`。
+- `plugin/package.json` 新增 `npm run backfill` 命令。
+- meter 启动时若存在 `usage.jsonl`，会回放原始记录（token / 分钟 / 模型），并从
+  `days.json` 合并工具调用与工作区会话数，避免重复累计 token。
+- 前端无需改动：仍通过 `GET /tonghuashun/snapshot` 获取，回填后的历史会自然出现在
+  日K / 分时 / 左栏 / 右栏中。
+
+### 8.3 隐私边界
+
+- 回填脚本只输出聚合计数，不输出会话 ID、工作区路径、模型名。
+- 数据文件只存在于 `$DSH_HOME/tonghuashun/`，不属于仓库内容，不应提交。
+- 新增 `AGENT.md` 作为采集/保存/回填/展示的通用指引；文档中全部使用占位符，
+  不包含真实路径或实例标识。
+- 本文档中的真实 workspace 示例也已改为占位符。
+
+### 8.4 验证
+
+- `plugin`：`npm run build` 通过，`npm test` 17 例全部通过。
+- 回填脚本为本地显式操作，不在插件启动时自动执行，避免未经确认读取本机会话历史。

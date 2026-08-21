@@ -11,7 +11,11 @@
  *
  * Capture is incremental from plugin load: sessions seen for the first time
  * start at their current log tail, so records are never re-counted across
- * restarts and pre-install history is intentionally not backfilled.
+ * restarts.
+ *
+ * Historical backfill is provided as an explicit local script
+ * (`scripts/backfill-sessions.mjs`). The plugin replays `usage.jsonl` on boot,
+ * so backfilled history is served after a restart without leaving the machine.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -43,12 +47,22 @@ export function apply(ctx: Context, config: Config = {}): () => void {
   const store = createStore(dataDir, (message, cause) => ctx.logger.warn(message, cause))
   const aggregator = new UsageAggregator()
   const cursors = new WeakMap<object, FoldCursor>()
-  ctx.logger.info(`tonghuashun-meter: loaded, dataDir=${dataDir}`)
+  // 不输出具体 dataDir，避免在日志中暴露本机路径。
+  ctx.logger.info('tonghuashun-meter: loaded')
 
-  // Boot: merge persisted day aggregates back so the day series survives restarts.
-  void store.loadDays().then((days) => {
-    for (const day of days) aggregator.foldDay(day)
-  })
+  // Boot: replay the raw usage log when present (token/minutes/models source of
+  // truth), then merge only tool-call counters from days.json to avoid double
+  // counting. If no usage log exists, fall back to persisted day aggregates.
+  void (async () => {
+    const [days, usage] = await Promise.all([store.loadDays(), store.loadUsage()])
+    if (usage.length > 0) {
+      for (const record of usage) aggregator.fold(record)
+      for (const day of days) aggregator.foldDayToolCalls(day)
+    } else {
+      for (const day of days) aggregator.foldDay(day)
+    }
+    store.commitDays(aggregator.dayRows())
+  })()
 
   const disposeEvent = ctx.on('session/event', (session: MeterSession) => {
     // First sight starts at the current log tail: everything already durable

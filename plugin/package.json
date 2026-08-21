@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none \".test-dist/tests/*.spec.js\"",
-    "smoke:real-session": "node scripts/smoke-real-session.mjs"
+    "smoke:real-session": "node scripts/smoke-real-session.mjs",
+    "backfill": "node scripts/backfill-sessions.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*"
@@ -31,6 +32,7 @@
   "files": [
     "lib",
     "src",
+    "scripts",
     "cordis.patch.yml"
   ],
   "devDependencies": {

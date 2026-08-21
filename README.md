@@ -6,7 +6,8 @@
 
 核心隐喻：**K 线图以股票行情展示 Token 消耗** —— 一次删掉 10,000 行死代码的大重构，烧穿 61.40亿 Token，K 线上一根大红烛拔地而起，子图的代码变更则是一根大绿柱一砸到底。
 
-![设计参考截图](assets/reference.png)
+![设计参考截图1](assets/预期效果图1.png)
+![设计参考截图2](assets/预期效果图2.png)
 
 ## 快速开始
 
@@ -82,6 +83,9 @@ tests/                         # node:test 单元测试（数据层）
    + 叠加 `deploy/web-terminal.patch.yml` 禁用默认 web UI 行（'root' 是 single 槽，先到先得）。
    轨迹流 / 快照→UI 映射 / 左栏三个 DSH 入口的接入点已预留（TODO 见 `client-plugin/src/bridge/README.md`）。
 4. **组件复用**：DSH SDK 中可替换的现成组件（`ui-conversation` / `ui-trajectory` / `ui-primitives` 的 `TerminalBlock`、`CodeBlock`、`BrandWordmark` 等）见 bridge README；左栏「技能 / 插件 / 设置」三个入口将打开对应 DSH 窗口。
+
+> 历史回填、数据本地保存方式与隐私边界见根目录 **`AGENT.md`**；meter 插件的回填命令为
+> `cd plugin && npm run backfill`。
 
 ## 开发注意事项
 

@@ -104,6 +104,35 @@ test('foldDay 合并持久化历史，重启后日线连续', () => {
   assert.equal(ws?.toolCalls, 5)
 })
 
+test('foldDayToolCalls 只补工具调用/会话数，不重复加 token', () => {
+  const agg = new UsageAggregator()
+  const ts = atLocal(15, 0)
+  agg.fold(record({ ts, sessionId: 's1', cwd: '/w1', model: 'm1' }))
+  const today = todayKey(ts)
+  const day: DayStat = {
+    date: today,
+    tokens: 9999,
+    inputTokens: 0,
+    outputTokens: 0,
+    byWorkspace: { '/w1': 9999 },
+    workspaceSessions: { '/w1': 3 },
+    workspaceToolCalls: { '/w1': 5 },
+    byModel: { m1: 9999 },
+    sessions: 3,
+    toolCalls: 5,
+  }
+  agg.foldDayToolCalls(day)
+  const snap = agg.snapshot(Date.now())
+  assert.equal(snap.totalTokens, 150) // 只来自 usage record
+  assert.equal(snap.today?.tokens, 150)
+  assert.equal(snap.today?.toolCalls, 5)
+  assert.equal(snap.today?.workspaceToolCalls['/w1'], 5)
+  const ws = snap.workspaces.find((w) => w.cwd === '/w1')
+  assert.equal(ws?.tokens, 150)
+  assert.equal(ws?.toolCalls, 5)
+  assert.equal(ws?.sessions, 3)
+})
+
 test('重复折叠同一会话的同一天不重复计 sessions', () => {
   const agg = new UsageAggregator()
   agg.fold(record({ ts: atLocal(14, 0), sessionId: 's1' }))
