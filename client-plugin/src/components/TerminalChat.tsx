@@ -115,6 +115,8 @@ export function TerminalChat(props: TerminalChatProps) {
   const [draft, setDraft] = useState('')
   const [modelOpen, setModelOpen] = useState(false)
   const [modelDraft, setModelDraft] = useState(model ?? '')
+  const [permOpen, setPermOpen] = useState(false)
+  const [permDraft, setPermDraft] = useState('workspace-write')
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
@@ -145,6 +147,13 @@ export function TerminalChat(props: TerminalChatProps) {
     if (name.length === 0 || onCommand === undefined) return
     setModelOpen(false)
     await onCommand(`/model ${name}`)
+  }
+
+  const submitPermission = async () => {
+    const name = permDraft.trim()
+    if (name.length === 0 || onCommand === undefined) return
+    setPermOpen(false)
+    await onCommand(`/permission ${name}`)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -280,6 +289,31 @@ export function TerminalChat(props: TerminalChatProps) {
               新建会话
             </button>
             <span className="grow" />
+            <div className="model-select">
+              <button
+                className="model-static"
+                title="切换权限模式"
+                onClick={() => setPermOpen((o) => !o)}
+              >
+                权限
+              </button>
+              {permOpen && (
+                <div className="model-pop">
+                  <input
+                    value={permDraft}
+                    placeholder="如 workspace-write"
+                    onChange={(e) => setPermDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        void submitPermission()
+                      }
+                    }}
+                  />
+                  <button onClick={() => void submitPermission()}>切换</button>
+                </div>
+              )}
+            </div>
             {model && (
               <div className="model-select">
                 <button
