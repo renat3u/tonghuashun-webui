@@ -79,6 +79,12 @@ function makeChatOps(ctx: ClientContext, boundSessionId: string | undefined): Ch
     newSession() {
       ctx.workspaces.startSession()
     },
+    async command(line) {
+      const face = sessionFaceOf(ctx, boundSessionId)
+      if (face === undefined) return false
+      const result = await face.command(line)
+      return result.ok
+    },
   }
 }
 

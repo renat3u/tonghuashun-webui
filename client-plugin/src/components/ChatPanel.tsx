@@ -18,7 +18,7 @@ const VERSION = '0.1.0'
  * 组件自身不建任何订阅机制。
  */
 export function ChatPanel(props: ChatPanelProps) {
-  const { useSession, sessionId, send, cancel, newSession, selectedName, sessionTitle, sessionCwd } = props
+  const { useSession, sessionId, send, cancel, newSession, command, selectedName, sessionTitle, sessionCwd } = props
   const snapshot = useSession((s) => s)
   const [localError, setLocalError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -72,6 +72,7 @@ export function ChatPanel(props: ChatPanelProps) {
       onSend={onSend}
       onCancel={cancel}
       onNewSession={newSession}
+      onCommand={command}
       onDismissError={() => setLocalError(null)}
     />
   )

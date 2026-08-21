@@ -92,16 +92,20 @@ export interface TerminalChatProps {
   onCancel: () => void
   /** 新建会话。 */
   onNewSession: () => void
+  /** 执行斜杠命令（模型切换等）。 */
+  onCommand?: (line: string) => Promise<boolean>
   /** 关闭错误条。 */
   onDismissError: () => void
 }
 
 /** 纯表现组件：对话 / Trajectory / 检查点三页签 + composer。数据全部来自 props。 */
 export function TerminalChat(props: TerminalChatProps) {
-  const { selectedName, directory, sessionId, model, version, messages, steps, running, partialText, error, hasSession, onSend, onCancel, onNewSession, onDismissError } = props
+  const { selectedName, directory, sessionId, model, version, messages, steps, running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onDismissError } = props
   const [tab, setTab] = useState<Tab>('conv')
   const [openSteps, setOpenSteps] = useState<ReadonlySet<number>>(() => new Set())
   const [draft, setDraft] = useState('')
+  const [modelOpen, setModelOpen] = useState(false)
+  const [modelDraft, setModelDraft] = useState(model ?? '')
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
@@ -125,6 +129,13 @@ export function TerminalChat(props: TerminalChatProps) {
     setDraft('')
     if (taRef.current) taRef.current.style.height = 'auto'
     onSend(text)
+  }
+
+  const submitModel = async () => {
+    const name = modelDraft.trim()
+    if (name.length === 0 || onCommand === undefined) return
+    setModelOpen(false)
+    await onCommand(`/model ${name}`)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -252,7 +263,36 @@ export function TerminalChat(props: TerminalChatProps) {
               新建会话
             </button>
             <span className="grow" />
-            {model && <span className="model-static" title="当前会话最近一次请求使用的模型">{model}</span>}
+            {model && (
+              <div className="model-select">
+                <button
+                  className="model-static"
+                  title="切换模型"
+                  onClick={() => {
+                    setModelDraft(model)
+                    setModelOpen((o) => !o)
+                  }}
+                >
+                  {model}
+                </button>
+                {modelOpen && (
+                  <div className="model-pop">
+                    <input
+                      value={modelDraft}
+                      placeholder="模型名，如 deepseek-v4"
+                      onChange={(e) => setModelDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          void submitModel()
+                        }
+                      }}
+                    />
+                    <button onClick={() => void submitModel()}>切换</button>
+                  </div>
+                )}
+              </div>
+            )}
             {running ? (
               <button className="send stop" title="停止当前回合" onClick={onCancel}>
                 <span className="stop-icon" />

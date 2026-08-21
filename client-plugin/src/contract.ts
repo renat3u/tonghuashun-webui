@@ -184,6 +184,7 @@ export interface SessionFaceLike {
   sessionId: string
   prompt(content: readonly PromptTextPart[], mode: 'queue' | 'steer'): Promise<RpcResultLike>
   cancel(): Promise<RpcResultLike>
+  command(line: string): Promise<RpcResultLike>
   getSnapshot(): ConversationSnapshotLike
   subscribe(fn: () => void): () => void
 }
@@ -270,6 +271,8 @@ export interface ChatOps {
   cancel(): void
   /** 新建会话（走 workspaces.startSession）。 */
   newSession(): void
+  /** 执行一条斜杠命令（如 /model deepseek-v4）。 */
+  command(line: string): Promise<boolean>
 }
 
 /** root 注册项的 inject 面。 */
