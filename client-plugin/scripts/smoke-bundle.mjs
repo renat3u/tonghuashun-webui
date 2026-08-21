@@ -146,7 +146,7 @@ console.log(`inject: ${plugin.inject}`)
 console.log(`effects: ${JSON.stringify(effects)}`)
 console.log(`registrations: ${registrations.map((r) => r.options.name).join(', ')}`)
 console.log(`conversation definitions: ${eventDefinitions.length} events + ${viewDefinitions.length} view`)
-if (eventDefinitions.length !== 5) throw new Error(`expected 5 conversation definitions, got ${eventDefinitions.length}`)
+if (eventDefinitions.length !== 6) throw new Error(`expected 6 conversation definitions, got ${eventDefinitions.length}`)
 if (viewDefinitions.length !== 1 || viewDefinitions[0].target !== 'chat') {
   throw new Error(`expected 1 chat view definition, got ${JSON.stringify(viewDefinitions)}`)
 }

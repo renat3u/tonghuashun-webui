@@ -875,6 +875,29 @@ button {
   gap: 6px;
 }
 
+.cp-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 8px 10px;
+}
+
+.cp-time {
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--mono);
+}
+
+.cp-summary {
+  font-size: 11.5px;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .cp {
   display: flex;
   gap: 10px;

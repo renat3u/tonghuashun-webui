@@ -5,6 +5,13 @@ import type { ConvMessage, Segment, TrajStep } from '../data/trajectory'
 
 type Tab = 'conv' | 'traj' | 'cp'
 
+/** 检查点行结构（由会话 compaction 节点映射）。 */
+export interface CheckpointItem {
+  seq: number
+  time: number
+  summary: string | null
+}
+
 const TAG_LABEL: Record<TrajStep['tag'], { text: string; cls: string }> = {
   think: { text: '◆ Think', cls: 'think' },
   read: { text: '↗ Read', cls: 'read' },
@@ -78,6 +85,8 @@ export interface TerminalChatProps {
   messages: ConvMessage[]
   /** 真实轨迹行（会话节点映射）。 */
   steps: TrajStep[]
+  /** 压缩检查点列表。 */
+  checkpoints?: CheckpointItem[]
   /** 当前会话是否有回合在跑（驱动停止按钮与思考中气泡）。 */
   running: boolean
   /** 流式中的部分助手文本。 */
@@ -100,7 +109,7 @@ export interface TerminalChatProps {
 
 /** 纯表现组件：对话 / Trajectory / 检查点三页签 + composer。数据全部来自 props。 */
 export function TerminalChat(props: TerminalChatProps) {
-  const { selectedName, directory, sessionId, model, version, messages, steps, running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onDismissError } = props
+  const { selectedName, directory, sessionId, model, version, messages, steps, checkpoints = [], running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onDismissError } = props
   const [tab, setTab] = useState<Tab>('conv')
   const [openSteps, setOpenSteps] = useState<ReadonlySet<number>>(() => new Set())
   const [draft, setDraft] = useState('')
@@ -157,7 +166,7 @@ export function TerminalChat(props: TerminalChatProps) {
           Trajectory <span className="cnt">{stepCount}</span>
         </button>
         <button className={`tab${tab === 'cp' ? ' active' : ''}`} onClick={() => setTab('cp')}>
-          检查点 <span className="cnt">0</span>
+          检查点 <span className="cnt">{checkpoints.length}</span>
         </button>
       </div>
 
@@ -205,9 +214,17 @@ export function TerminalChat(props: TerminalChatProps) {
 
       {tab === 'cp' && (
         <div className="checkpoints">
-          <div className="step-zh" style={{ color: 'var(--faint)' }}>
-            检查点数据来自 session-persistence；尚未接入真实 DSH 后此处显示会话快照列表。
-          </div>
+          {checkpoints.length === 0 && (
+            <div className="step-zh" style={{ color: 'var(--faint)' }}>
+              本会话暂无压缩检查点。
+            </div>
+          )}
+          {checkpoints.map((cp, i) => (
+            <div key={`${cp.seq}-${i}`} className="cp-row">
+              <span className="cp-time">{new Date(cp.time).toLocaleString()}</span>
+              <div className="cp-summary">{cp.summary ?? '(无摘要)'}</div>
+            </div>
+          ))}
         </div>
       )}
 

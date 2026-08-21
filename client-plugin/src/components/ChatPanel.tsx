@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { TerminalChat } from './TerminalChat'
-import type { ChatPanelProps } from '../contract'
+import type { ChatPanelProps, ConversationNodeLike } from '../contract'
 import {
   lastModelOf,
   nodesToMessages,
@@ -30,6 +30,10 @@ export function ChatPanel(props: ChatPanelProps) {
     const partial = partialStepOf(snapshot)
     return partial ? [...base, partial] : base
   }, [snapshot])
+  const checkpoints = useMemo(
+    () => (snapshot?.nodes ?? []).filter((n): n is Extract<ConversationNodeLike, { kind: 'compaction' }> => n.kind === 'compaction'),
+    [snapshot],
+  )
 
   const promptError = snapshot?.promptError
   const error = promptError
@@ -65,6 +69,7 @@ export function ChatPanel(props: ChatPanelProps) {
       version={VERSION}
       messages={messages}
       steps={steps}
+      checkpoints={checkpoints}
       running={snapshot?.running ?? false}
       partialText={snapshot ? partialTextOf(snapshot) : ''}
       error={error}

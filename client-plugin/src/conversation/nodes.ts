@@ -740,6 +740,62 @@ function fallbackTurnError(context: ThsNodeContext<ThsTurnErrorState>): ThsTurnE
   return state
 }
 
+// ---------- Definition 6：压缩检查点 ----------
+
+export interface ThsCompactionState {
+  node: ConversationNodeLike
+  anchorSeq: number
+}
+
+function compactionSummaryOf(event: ThsSessionEvent): string {
+  const data = event.data as { summary?: unknown }
+  if (typeof data.summary === 'string') return data.summary
+  if (Array.isArray(data.summary)) {
+    return data.summary
+      .map((block) => {
+        if (typeof block === 'string') return block
+        if (block !== null && typeof block === 'object' && 'text' in block) {
+          return String((block as { text?: unknown }).text ?? '')
+        }
+        return ''
+      })
+      .filter((text) => text.length > 0)
+      .join('\n')
+  }
+  return ''
+}
+
+/** 压缩检查点 Definition（compaction/summary 定稿为一个 checkpoint 节点）。 */
+export const compactionDefinition: ThsDefinition<ThsCompactionState> = {
+  kind: 'ths-compaction',
+  target: 'chat',
+  match: (event) => {
+    if (event.type !== 'compaction/summary') return null
+    const data = event.data as { compactionId?: unknown }
+    const id = data.compactionId !== undefined ? String(data.compactionId) : `seq:${event.seq}`
+    return { id, role: 'start' }
+  },
+  start: (_context, match) => {
+    if (match.event.type !== 'compaction/summary') throw new Error('ths-compaction start requires compaction/summary')
+    const summary = compactionSummaryOf(match.event)
+    return {
+      node: {
+        kind: 'compaction',
+        seq: match.event.seq,
+        time: match.event.time,
+        summary: summary || '(压缩摘要)',
+      },
+      anchorSeq: match.event.seq,
+    }
+  },
+  update: (context) => context.state,
+  buildViewNode: (context) => {
+    const state = context.state
+    if (state === undefined) return null
+    return chatViewNode(context, 'compaction', state.anchorSeq, state.node)
+  },
+}
+
 // ---------- chat 视图构建器 ----------
 
 /** 本插件 chat 视图节点的 data 载体（ConversationNodeLike + 流式标记）。 */
@@ -815,6 +871,7 @@ function legacyContribution(viewNode: ThsViewNode): LegacyContribution {
     case 'context':
     case 'command':
     case 'turn-error':
+    case 'compaction':
       return { anchorSeq: viewNode.anchorSeq, node, partial: null }
     default:
       return { anchorSeq: viewNode.anchorSeq, node: null, partial: null }
@@ -936,6 +993,7 @@ export const THS_DEFINITIONS: readonly ThsDefinition<unknown>[] = [
   toolDefinition,
   commandDefinition,
   turnErrorDefinition,
+  compactionDefinition,
 ]
 
 /**
