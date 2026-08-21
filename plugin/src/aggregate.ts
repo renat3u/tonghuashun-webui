@@ -49,6 +49,7 @@ export class UsageAggregator {
       workspaceSessions: {},
       workspaceToolCalls: {},
       byModel: {},
+      byModelDetail: {},
       sessions: 0,
       toolCalls: 0,
     }
@@ -96,7 +97,24 @@ export class UsageAggregator {
     const cwd = record.cwd ?? '(no cwd)'
     day.byWorkspace[cwd] = (day.byWorkspace[cwd] ?? 0) + tokens
     this.markWorkspaceSession(date, cwd, record.sessionId)
-    if (record.model !== undefined) day.byModel[record.model] = (day.byModel[record.model] ?? 0) + tokens
+    if (record.model !== undefined) {
+      day.byModel[record.model] = (day.byModel[record.model] ?? 0) + tokens
+      const details = day.byModelDetail ??= {}
+      const detail = details[record.model] ??= {
+        tokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+      }
+      detail.tokens += tokens
+      detail.inputTokens += record.inputTokens
+      detail.outputTokens += record.outputTokens
+      detail.cacheReadTokens += record.cacheReadTokens
+      detail.cacheWriteTokens += record.cacheWriteTokens
+      detail.reasoningTokens += record.reasoningTokens
+    }
 
     let sessions = this.daySessions.get(date)
     if (sessions === undefined) {
@@ -157,6 +175,25 @@ export class UsageAggregator {
     }
     for (const [model, tokens] of Object.entries(day.byModel)) {
       current.byModel[model] = (current.byModel[model] ?? 0) + tokens
+    }
+    if (day.byModelDetail !== undefined) {
+      const currentDetails = current.byModelDetail ??= {}
+      for (const [model, detail] of Object.entries(day.byModelDetail)) {
+        const target = currentDetails[model] ??= {
+          tokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+        }
+        target.tokens += detail.tokens
+        target.inputTokens += detail.inputTokens
+        target.outputTokens += detail.outputTokens
+        target.cacheReadTokens += detail.cacheReadTokens
+        target.cacheWriteTokens += detail.cacheWriteTokens
+        target.reasoningTokens += detail.reasoningTokens
+      }
     }
     current.sessions += day.sessions
     current.toolCalls += day.toolCalls

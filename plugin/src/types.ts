@@ -69,6 +69,16 @@ export interface MinuteStat {
   outputTokens: number
 }
 
+/** Per-model detailed token buckets for one day. */
+export interface ModelTokenDetail {
+  tokens: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+}
+
 /** Per-day consumption stat (日 K). */
 export interface DayStat {
   /** Local 'YYYY-MM-DD'. */
@@ -84,6 +94,8 @@ export interface DayStat {
   workspaceToolCalls: Record<string, number>
   /** Model id -> tokens. */
   byModel: Record<string, number>
+  /** Model id -> detailed buckets. */
+  byModelDetail?: Record<string, ModelTokenDetail>
   /** Distinct sessions that consumed tokens this day. */
   sessions: number
   /** Tool calls recorded this day. */

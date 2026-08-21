@@ -318,6 +318,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
             sessions: currentInstrument.sessions,
             cwd: currentSummary?.cwd ?? currentInstrument.name,
           }}
+          modelDetail={liveSnapshot?.today?.byModelDetail}
         />
       </div>
       <StatusBar engine={engine} />

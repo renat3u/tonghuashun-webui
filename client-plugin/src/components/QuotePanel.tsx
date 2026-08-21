@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { fmt, fmtToken, fmtPct, dirClass } from '../lib/format'
 import type { ChangeRow, FlowRow, Instrument, TapeRow, TreeRow } from '../lib/market'
 import type { MarketEngine } from '../lib/useMarketEngine'
+import type { SnapshotModelDetail } from '../bridge/snapshot'
 import { Icon } from './icons'
 
 interface Props {
@@ -23,11 +24,13 @@ interface Props {
     sessions: number
     cwd?: string
   }
+  /** 今日按模型拆分的 token 明细。 */
+  modelDetail?: Record<string, SnapshotModelDetail>
 }
 
 type PanelTab = 'changes' | 'tree' | 'flow' | 'depth'
 
-export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, openPath, depth }: Props) {
+export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, openPath, depth, modelDetail }: Props) {
   const [tab, setTab] = useState<PanelTab>('changes')
   const [hideTape, setHideTape] = useState(false)
   const q = engine.quotes.get(instrument.code)
@@ -215,16 +218,24 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
 
       {tab === 'flow' && (
         <div className="changes" style={{ paddingBottom: 8 }}>
-          {tokenFlow.map((f) => (
-            <div key={f.name} className="flow-row">
-              <span className="bar" style={{ width: `${Math.max(2, f.share).toFixed(1)}%` }} />
-              <span className="meta">
-                <span className="nm">{f.name}</span>
-                <span className="tk">{fmtToken(f.tokens)}</span>
-              </span>
-              <span className="share">{f.share.toFixed(1)}%</span>
-            </div>
-          ))}
+          {tokenFlow.map((f) => {
+            const detail = modelDetail?.[f.name]
+            return (
+              <div key={f.name} className="flow-row">
+                <span className="bar" style={{ width: `${Math.max(2, f.share).toFixed(1)}%` }} />
+                <span className="meta">
+                  <span className="nm">{f.name}</span>
+                  <span className="tk">{fmtToken(f.tokens)}</span>
+                  {detail !== undefined && (
+                    <span className="flow-detail">
+                      in {fmt(detail.inputTokens)} · out {fmt(detail.outputTokens)} · cacheR {fmt(detail.cacheReadTokens)} · cacheW {fmt(detail.cacheWriteTokens)} · reason {fmt(detail.reasoningTokens)}
+                    </span>
+                  )}
+                </span>
+                <span className="share">{f.share.toFixed(1)}%</span>
+              </div>
+            )
+          })}
           <div className="step-zh" style={{ padding: '4px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
             最近几次 Token 被这些项目消耗
           </div>

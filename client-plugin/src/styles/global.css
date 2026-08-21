@@ -1971,3 +1971,14 @@ button {
   font-family: var(--mono);
   text-align: right;
 }
+
+.flow-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 9.5px;
+  color: var(--faint);
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

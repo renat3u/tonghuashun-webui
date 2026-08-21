@@ -7,6 +7,15 @@
  */
 import type { Candle, FlowRow, IndexQuote, IntradayPoint, TapeRow } from '../lib/market'
 
+export interface SnapshotModelDetail {
+  tokens: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+}
+
 export interface SnapshotDay {
   date: string
   tokens: number
@@ -16,6 +25,7 @@ export interface SnapshotDay {
   workspaceSessions: Record<string, number>
   workspaceToolCalls: Record<string, number>
   byModel: Record<string, number>
+  byModelDetail?: Record<string, SnapshotModelDetail>
   sessions: number
   toolCalls: number
 }
