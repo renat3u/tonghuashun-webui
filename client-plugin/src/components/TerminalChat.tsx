@@ -131,6 +131,13 @@ export function TerminalChat(props: TerminalChatProps) {
     return () => window.removeEventListener('ths:close-popovers', close)
   }, [])
 
+  // 点击分时成交 → 切到 Trajectory
+  useEffect(() => {
+    const showTrajectory = () => setTab('traj')
+    window.addEventListener('ths:show-trajectory', showTrajectory)
+    return () => window.removeEventListener('ths:show-trajectory', showTrajectory)
+  }, [])
+
   // 内容变化时滚动到底部
   useEffect(() => {
     const el = scrollRef.current

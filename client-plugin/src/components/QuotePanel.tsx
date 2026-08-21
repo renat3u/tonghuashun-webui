@@ -250,7 +250,13 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
             <span />
           </div>
           {tape.map((t, i) => (
-            <div key={`${t.time}-${i}`} className="tape-row">
+            <div
+              key={`${t.time}-${i}`}
+              className="tape-row"
+              style={{ cursor: 'pointer' }}
+              title="点击查看 Trajectory"
+              onClick={() => window.dispatchEvent(new CustomEvent('ths:show-trajectory'))}
+            >
               <span className="tm">{t.time}</span>
               <span className={`pr ${t.delta >= 0 ? 'c-up' : 'c-down'}`}>{fmtToken(t.tokens)}</span>
               <span className={`qt ${t.delta >= 0 ? 'c-up' : 'c-down'}`}>
