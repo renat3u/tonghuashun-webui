@@ -477,6 +477,38 @@ button {
   min-width: 46px;
 }
 
+.watch-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.watch-name .nm,
+.watch-name .cd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-name .fav {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  padding: 0;
+}
+.watch-name .fav:hover {
+  color: var(--accent);
+}
+
 .c-up {
   color: var(--up-bright);
 }

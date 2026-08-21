@@ -94,6 +94,15 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
   const [pinned, setPinned] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [favoriteCodes, setFavoriteCodes] = useState<ReadonlySet<string>>(() => {
+    try {
+      const raw = localStorage.getItem('ths.favorite-codes')
+      const parsed: unknown = raw === null ? [] : JSON.parse(raw)
+      return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [])
+    } catch {
+      return new Set()
+    }
+  })
   const [chartPct, setChartPct] = useState(readSavedChartPct)
   const centerRef = useRef<HTMLElement | null>(null)
   const liveSnapshot = useSnapshotPoller()
@@ -156,6 +165,15 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     }
   }, [chartPct])
 
+  // 自选持久化
+  useEffect(() => {
+    try {
+      localStorage.setItem('ths.favorite-codes', JSON.stringify([...favoriteCodes]))
+    } catch {
+      // 隐私模式等场景下存储不可用，忽略
+    }
+  }, [favoriteCodes])
+
   // 全局快捷键：/ 聚焦输入框，Ctrl/Cmd+K 聚焦全局搜索
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -217,7 +235,24 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     <>
       <TopBar engine={engine} onSelect={setSelected} sessions={sessionState} workspaceRows={workspaceRows} onOpenSession={openSession} onNewSession={newSession} />
       <div className="main">
-        <Rail engine={engine} selected={selected} onSelect={setSelected} workspaceRows={workspaceRows} collapsed={railCollapsed} onToggleCollapse={() => setRailCollapsed((v) => !v)} onNotice={setNotice} />
+        <Rail
+          engine={engine}
+          selected={selected}
+          onSelect={setSelected}
+          workspaceRows={workspaceRows}
+          collapsed={railCollapsed}
+          onToggleCollapse={() => setRailCollapsed((v) => !v)}
+          onNotice={setNotice}
+          favoriteCodes={favoriteCodes}
+          onToggleFavorite={(code) =>
+            setFavoriteCodes((prev) => {
+              const next = new Set(prev)
+              if (next.has(code)) next.delete(code)
+              else next.add(code)
+              return next
+            })
+          }
+        />
         <section className="center" ref={centerRef}>
           {renderChat({
             selectedName: currentInstrument.name,
