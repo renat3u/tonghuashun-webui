@@ -206,7 +206,7 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, onOpenSessio
       </div>
       <div className="top-actions">
         {ICON_ACTIONS.map((name) => (
-          <button key={name} title={name}>
+          <button key={name} title={name} aria-label={name}>
             <Icon name={name} size={15} />
           </button>
         ))}

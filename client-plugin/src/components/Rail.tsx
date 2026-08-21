@@ -74,6 +74,7 @@ export function Rail({ engine, selected, onSelect, workspaceRows, collapsed = fa
             key={item.label}
             className={`nav-item${item.active ? ' active' : ''}`}
             title={item.title}
+            aria-label={item.title}
             onClick={() => {
               if (item.active) return
               onNotice?.(`${item.label}入口：待接入 DSH 窗口（plan.md Phase 2）`)
