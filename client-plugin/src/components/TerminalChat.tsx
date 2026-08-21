@@ -119,6 +119,7 @@ export function TerminalChat(props: TerminalChatProps) {
   const [permDraft, setPermDraft] = useState('workspace-write')
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   // Esc 全局关闭弹层
   useEffect(() => {
@@ -164,6 +165,13 @@ export function TerminalChat(props: TerminalChatProps) {
     if (name.length === 0 || onCommand === undefined) return
     setPermOpen(false)
     await onCommand(`/permission ${name}`)
+  }
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file === undefined) return
+    setDraft((prev) => (prev.length > 0 ? `${prev} ` : '') + `@file:${file.name}`)
+    e.target.value = ''
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -289,9 +297,10 @@ export function TerminalChat(props: TerminalChatProps) {
             onKeyDown={onKeyDown}
           />
           <div className="row">
-            <button className="plus" title="附加文件" onClick={() => { /* 附件接入点（未实现） */ }}>
+            <button className="plus" title="附加文件（当前以 @file: 标记插入）" onClick={() => fileRef.current?.click()}>
               <Icon name="plus" size={11} />
             </button>
+            <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={onPickFile} />
             <button className="access" title="新建会话" onClick={onNewSession}>
               <span className="lock">
                 <Icon name="zap" size={10} />
