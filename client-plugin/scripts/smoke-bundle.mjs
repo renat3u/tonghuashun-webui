@@ -123,6 +123,7 @@ const chatInject = chatEntry.options.inject?.(undefined) ?? {}
 const html = renderToString(
   rootEntry.component({
     useSessions: (sel) => sel({ ids: [], byId: {}, current: undefined, phase: 'ready' }),
+    useWorkspaces: (sel) => sel({ items: [], state: 'ready', phase: 'ready', baselinesReady: true, recentWorkspaceId: undefined }),
     renderSlot: (_key, owner) =>
       chatEntry.component({
         ...owner,

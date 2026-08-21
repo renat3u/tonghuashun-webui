@@ -9,10 +9,11 @@ import type { RootProps } from '../contract'
  * 数据全部来自 props，组件不接触 ctx。
  */
 export function TerminalRoot(props: RootProps): ReactElement {
-  const { useSessions, renderSlot, openSession, newSession } = props
+  const { useSessions, useWorkspaces, renderSlot, openSession, newSession } = props
   return (
     <App
       useSessions={useSessions}
+      useWorkspaces={useWorkspaces}
       openSession={openSession}
       newSession={newSession}
       renderChat={(owner) => renderSlot('terminal.chat', owner)}

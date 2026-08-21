@@ -233,9 +233,26 @@ export interface ISessionsLike {
   binding(id: string): SessionBindingLike | undefined
 }
 
+/** 工作区行（dsh WorkspaceView 的结构子集）。 */
+export interface WorkspaceViewLike {
+  workspaceId: string
+  path: string
+  title: string
+  sessionIds: readonly string[]
+}
+
+/** 工作区列表快照（dsh WorkspaceListState 的结构子集）。 */
+export interface WorkspaceListStateLike {
+  items: readonly WorkspaceViewLike[]
+  state: string
+  phase: string
+  baselinesReady: boolean
+  recentWorkspaceId: string | undefined
+}
+
 /** workspaces 服务面（dsh IWorkspaces 的结构子集）。 */
 export interface IWorkspacesLike {
-  list: ObservableSnapshotLike<unknown>
+  list: ObservableSnapshotLike<WorkspaceListStateLike>
   startSession(): void
 }
 
@@ -278,9 +295,10 @@ export interface ChatStandardProps {
 /** ChatPanel 完整 props = owner 面 + 标准 seat + inject 面。 */
 export interface ChatPanelProps extends ChatOwnerProps, ChatStandardProps, ChatOps {}
 
-/** root 组件 props = 全局 seat（useSessions）+ renderSlot + root inject 面。 */
+/** root 组件 props = 全局 seat（useSessions/useWorkspaces）+ renderSlot + root inject 面。 */
 export interface RootProps extends RootOps {
   useSessions: SnapshotSelectorHook<SessionListStateLike>
+  useWorkspaces: SnapshotSelectorHook<WorkspaceListStateLike>
   renderSlot: (key: 'terminal.chat', owner: ChatOwnerProps) => ReactNode
 }
 

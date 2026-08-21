@@ -6,7 +6,9 @@ import { QuotePanel } from './components/QuotePanel'
 import { StatusBar } from './components/StatusBar'
 import { useMarketEngine, useSnapshotPoller } from './lib/useMarketEngine'
 import { isLiveBridge } from './bridge'
-import type { ChatOwnerProps, SessionListStateLike, SnapshotSelectorHook } from './contract'
+import { buildWorkspaceRows, type WorkspaceRow } from './lib/workspace'
+import type { Instrument } from './lib/market'
+import type { ChatOwnerProps, SessionListStateLike, SnapshotSelectorHook, WorkspaceListStateLike } from './contract'
 
 /** 图表高度（占中栏百分比）的拖动边界与默认值。 */
 const CHART_MIN_PCT = 16
@@ -27,6 +29,8 @@ function readSavedChartPct(): number {
 export interface AppProps {
   /** 框架 useSessions 座位（root 全局 seat，经 TerminalRoot 下传）。 */
   useSessions: SnapshotSelectorHook<SessionListStateLike>
+  /** 框架 useWorkspaces 座位（root 全局 seat，经 TerminalRoot 下传）。 */
+  useWorkspaces: SnapshotSelectorHook<WorkspaceListStateLike>
   /** 打开指定会话（root inject 面回调）。 */
   openSession: (id: string) => void
   /** 新建会话（root inject 面回调）。 */
@@ -35,7 +39,55 @@ export interface AppProps {
   renderChat: (owner: ChatOwnerProps) => ReactNode
 }
 
-export default function App({ useSessions, openSession, newSession, renderChat }: AppProps) {
+/** 真实工作区行 → 右侧行情需要的 Instrument 结构。 */
+function instrumentFromRow(row: WorkspaceRow): Instrument {
+  return {
+    code: row.code,
+    name: row.name,
+    sector: '工作区',
+    hot: false,
+    prevToken: 0,
+    last: row.tokens,
+    open: row.tokens,
+    high: row.tokens,
+    low: row.tokens,
+    pct: 0,
+    change: 0,
+    locDelta: 0,
+    commitCount: row.toolCalls,
+    locTotal: 0,
+    changeRate: 0,
+    contextTtm: 0,
+    totalToken: row.tokens,
+    sessions: row.sessions,
+    seed: 0,
+  }
+}
+
+/** 无任何数据时的兜底 Instrument，避免空列表导致渲染崩溃。 */
+const EMPTY_INSTRUMENT: Instrument = {
+  code: 'EMPTY',
+  name: '未选择工作区',
+  sector: '工作区',
+  hot: false,
+  prevToken: 0,
+  last: 0,
+  open: 0,
+  high: 0,
+  low: 0,
+  pct: 0,
+  change: 0,
+  locDelta: 0,
+  commitCount: 0,
+  locTotal: 0,
+  changeRate: 0,
+  contextTtm: 0,
+  totalToken: 0,
+  sessions: 0,
+  seed: 0,
+}
+
+export default function App({ useSessions, useWorkspaces, openSession, newSession, renderChat }: AppProps) {
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
   const [chartPct, setChartPct] = useState(readSavedChartPct)
@@ -53,20 +105,43 @@ export default function App({ useSessions, openSession, newSession, renderChat }
 
   const sessionState = useSessions((s) => s)
   const currentSummary = sessionState.current !== undefined ? sessionState.byId[sessionState.current] : undefined
+  const workspaceState = useWorkspaces((s) => s)
+  const workspaceRows = useMemo(
+    () => buildWorkspaceRows(workspaceState, sessionState, liveSnapshot),
+    [workspaceState, sessionState, liveSnapshot],
+  )
+  const hasRealWorkspaces = workspaceRows.length > 0
+
+  // 有真实工作区时，把选中项切到真实列表；没有真实数据时仍走模拟行情。
+  useEffect(() => {
+    if (!hasRealWorkspaces) return
+    if (workspaceRows.some((r) => r.code === selected)) return
+    const first = workspaceRows[0]
+    if (first !== undefined) setSelected(first.code)
+  }, [hasRealWorkspaces, workspaceRows, selected])
 
   // 始终解析到有效代码（live 数据到达而 selected 尚未切换的过渡帧不产生空序列）
   const resolvedCode = useMemo(() => {
+    if (hasRealWorkspaces) {
+      return workspaceRows.some((r) => r.code === selected) ? selected : (workspaceRows[0]?.code ?? selected)
+    }
     if (engine.static.instruments.some((x) => x.code === selected)) return selected
     return engine.static.instruments[0]?.code ?? selected
-  }, [engine.static, selected])
+  }, [hasRealWorkspaces, workspaceRows, selected, engine.static])
 
-  const instrument = useMemo(
-    () => engine.static.instruments.find((x) => x.code === resolvedCode) ?? engine.static.instruments[0],
-    [engine.static, resolvedCode],
-  )
-  const daily = engine.static.daily.get(resolvedCode) ?? []
-  const intraday = engine.static.intraday.get(resolvedCode) ?? []
-  const fiveDay = engine.static.fiveDay.get(resolvedCode) ?? []
+  const instrument = useMemo(() => {
+    if (hasRealWorkspaces) {
+      const row = workspaceRows.find((r) => r.code === resolvedCode) ?? workspaceRows[0]
+      return row !== undefined ? instrumentFromRow(row) : undefined
+    }
+    return engine.static.instruments.find((x) => x.code === resolvedCode) ?? engine.static.instruments[0]
+  }, [hasRealWorkspaces, workspaceRows, resolvedCode, engine.static])
+
+  const currentInstrument = instrument ?? EMPTY_INSTRUMENT
+
+  const daily = hasRealWorkspaces ? [] : (engine.static.daily.get(resolvedCode) ?? [])
+  const intraday = hasRealWorkspaces ? [] : (engine.static.intraday.get(resolvedCode) ?? [])
+  const fiveDay = hasRealWorkspaces ? [] : (engine.static.fiveDay.get(resolvedCode) ?? [])
 
   // 图表高度记忆
   useEffect(() => {
@@ -102,12 +177,12 @@ export default function App({ useSessions, openSession, newSession, renderChat }
 
   return (
     <>
-      <TopBar engine={engine} onSelect={setSelected} sessions={sessionState} onOpenSession={openSession} onNewSession={newSession} />
+      <TopBar engine={engine} onSelect={setSelected} sessions={sessionState} workspaceRows={workspaceRows} onOpenSession={openSession} onNewSession={newSession} />
       <div className="main">
-        <Rail engine={engine} selected={selected} onSelect={setSelected} />
+        <Rail engine={engine} selected={selected} onSelect={setSelected} workspaceRows={workspaceRows} />
         <section className="center" ref={centerRef}>
           {renderChat({
-            selectedName: instrument.name,
+            selectedName: currentInstrument.name,
             sessionTitle: currentSummary?.title ?? currentSummary?.displayTitle,
             sessionCwd: currentSummary?.cwd,
           })}
@@ -124,16 +199,16 @@ export default function App({ useSessions, openSession, newSession, renderChat }
             daily={daily}
             intraday={intraday}
             fiveDay={fiveDay}
-            prevToken={instrument.prevToken}
+            prevToken={currentInstrument.prevToken}
             crash={selected === 'DSH001'}
-            livePrice={engine.tape[0]?.tokens ?? instrument.prevToken / 240}
+            livePrice={engine.tape[0]?.tokens ?? currentInstrument.prevToken / 240}
             tick={engine.tick}
             style={{ flex: `0 0 ${chartPct.toFixed(2)}%` }}
           />
         </section>
         <QuotePanel
           engine={engine}
-          instrument={instrument}
+          instrument={currentInstrument}
           tape={engine.tape}
           changes={engine.changes}
           tokenFlow={engine.tokenFlow}

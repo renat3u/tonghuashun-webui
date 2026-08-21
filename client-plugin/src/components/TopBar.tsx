@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { fmt, fmtPct, dirClass } from '../lib/format'
 import type { MarketEngine } from '../lib/useMarketEngine'
-import type { Instrument } from '../lib/market'
+import type { WorkspaceRow } from '../lib/workspace'
 import type { SessionListStateLike } from '../contract'
 import { Icon } from './icons'
 
@@ -10,6 +10,8 @@ interface Props {
   onSelect: (code: string) => void
   /** 框架 useSessions 快照（会话下拉数据源）。 */
   sessions: SessionListStateLike
+  /** 真实工作区行，用于全局搜索。 */
+  workspaceRows?: WorkspaceRow[]
   /** 打开指定会话。 */
   onOpenSession: (id: string) => void
   /** 新建会话。 */
@@ -18,31 +20,56 @@ interface Props {
 
 const ICON_ACTIONS = ['monitor', 'clock', 'user'] as const
 
-export function TopBar({ engine, onSelect, sessions, onOpenSession, onNewSession }: Props) {
+type SearchHit =
+  | { kind: 'workspace'; code: string; name: string; sub: string; last: number; pct: number }
+  | { kind: 'session'; id: string; title: string; sub: string }
+
+export function TopBar({ engine, onSelect, sessions, workspaceRows, onOpenSession, onNewSession }: Props) {
   const [q, setQ] = useState('')
   const [focused, setFocused] = useState(false)
   const [selIdx, setSelIdx] = useState(0)
   const [sessOpen, setSessOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
 
-  const matches = useMemo(() => {
-    const kw = q.trim().toLowerCase()
-    const all = engine.static.instruments.filter((x) => x.code !== 'DSH001')
-    if (!kw) return []
-    return all
-      .filter((x) => x.name.toLowerCase().includes(kw) || x.code.toLowerCase().includes(kw) || x.name.includes(kw))
-      .slice(0, 6)
-  }, [q, engine.static])
-
   const sessionRows = useMemo(
     () => [...sessions.ids].reverse().map((id) => sessions.byId[id]).filter((row) => row !== undefined),
     [sessions],
   )
+
+  const matches = useMemo(() => {
+    const kw = q.trim().toLowerCase()
+    if (!kw) return []
+    const hits: SearchHit[] = []
+    const realRows = workspaceRows ?? []
+    if (realRows.length > 0) {
+      for (const row of realRows) {
+        if (row.name.toLowerCase().includes(kw) || row.code.toLowerCase().includes(kw) || row.cwd.toLowerCase().includes(kw)) {
+          hits.push({ kind: 'workspace', code: row.code, name: row.name, sub: row.cwd, last: row.tokens, pct: 0 })
+        }
+      }
+    } else {
+      for (const x of engine.static.instruments.filter((i) => i.code !== 'DSH001')) {
+        if (x.name.toLowerCase().includes(kw) || x.code.toLowerCase().includes(kw) || x.name.includes(kw)) {
+          const quote = engine.quotes.get(x.code)
+          hits.push({ kind: 'workspace', code: x.code, name: x.name, sub: '模拟工作区', last: quote?.last ?? x.last, pct: quote?.pct ?? x.pct })
+        }
+      }
+    }
+    for (const row of sessionRows) {
+      const text = `${row.displayTitle} ${row.id} ${row.cwd ?? ''}`.toLowerCase()
+      if (text.includes(kw)) {
+        hits.push({ kind: 'session', id: row.id, title: row.displayTitle, sub: row.cwd ?? row.id })
+      }
+    }
+    return hits.slice(0, 8)
+  }, [q, engine.static, engine.quotes, workspaceRows, sessionRows])
+
   const currentRow = sessions.current !== undefined ? sessions.byId[sessions.current] : undefined
   const currentLabel = currentRow?.displayTitle ?? '选择会话'
 
-  const pick = (ins: Instrument) => {
-    onSelect(ins.code)
+  const pick = (hit: SearchHit) => {
+    if (hit.kind === 'workspace') onSelect(hit.code)
+    else onOpenSession(hit.id)
     setQ('')
     setFocused(false)
   }
@@ -107,24 +134,25 @@ export function TopBar({ engine, onSelect, sessions, onOpenSession, onNewSession
             {matches.length === 0 && (
               <div className="empty">{q.trim() ? '未找到匹配的包 / 会话' : '输入名称或代码，如 dsh、WEB006'}</div>
             )}
-            {matches.map((ins, i) => {
-              const quote = engine.quotes.get(ins.code)
-              const pct = quote?.pct ?? ins.pct
-              const cls = dirClass(pct)
+            {matches.map((hit, i) => {
+              const cls = hit.kind === 'workspace' ? dirClass(hit.pct) : ''
               return (
                 <div
-                  key={ins.code}
+                  key={hit.kind === 'workspace' ? hit.code : hit.id}
                   className={`row${i === selIdx ? ' sel' : ''}`}
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    pick(ins)
+                    pick(hit)
                   }}
                 >
-                  <span className="nm">{ins.name}</span>
-                  <span className="cd">{ins.code}</span>
-                  <span className={`pr num ${cls}`}>
-                    {fmt(quote?.last ?? ins.last)} {fmtPct(pct)}
-                  </span>
+                  <span className="nm">{hit.kind === 'workspace' ? hit.name : hit.title}</span>
+                  <span className="cd">{hit.kind === 'workspace' ? hit.code : '会话'}</span>
+                  <span className="sub">{hit.sub}</span>
+                  {hit.kind === 'workspace' && (
+                    <span className={`pr num ${cls}`}>
+                      {fmt(hit.last)} {fmtPct(hit.pct)}
+                    </span>
+                  )}
                 </div>
               )
             })}
