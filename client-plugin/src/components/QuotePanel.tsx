@@ -15,11 +15,19 @@ interface Props {
   onTogglePin: () => void
   /** 用系统默认应用打开路径（变更/文件树行点击）。 */
   openPath?: (path: string) => Promise<void>
+  /** 盘口/会话状态数据。 */
+  depth?: {
+    running: boolean
+    model?: string
+    toolCalls: number
+    sessions: number
+    cwd?: string
+  }
 }
 
-type PanelTab = 'changes' | 'tree' | 'flow'
+type PanelTab = 'changes' | 'tree' | 'flow' | 'depth'
 
-export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, openPath }: Props) {
+export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, openPath, depth }: Props) {
   const [tab, setTab] = useState<PanelTab>('changes')
   const [hideTape, setHideTape] = useState(false)
   const q = engine.quotes.get(instrument.code)
@@ -115,7 +123,34 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
         <button className={`bt${tab === 'flow' ? ' active' : ''}`} onClick={() => setTab('flow')}>
           token流向
         </button>
+        <button className={`bt${tab === 'depth' ? ' active' : ''}`} onClick={() => setTab('depth')}>
+          盘口
+        </button>
       </div>
+
+      {tab === 'depth' && (
+        <div className="changes">
+          <div className="depth-row">
+            <span className="k">运行状态</span>
+            <span className="v">{depth?.running ? '运行中' : '空闲'}</span>
+          </div>
+          <div className="depth-row">
+            <span className="k">当前会话</span>
+            <span className="v">{depth?.cwd ?? '未选择'}</span>
+          </div>
+          <div className="depth-row">
+            <span className="k">工具调用</span>
+            <span className="v">{fmt(depth?.toolCalls ?? 0)}</span>
+          </div>
+          <div className="depth-row">
+            <span className="k">关联会话</span>
+            <span className="v">{fmt(depth?.sessions ?? 0)}</span>
+          </div>
+          <div className="step-zh" style={{ padding: '4px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
+            盘口为 Harness 会话状态占位：后续可扩展队列/子代理/jobs。
+          </div>
+        </div>
+      )}
 
       {tab === 'changes' && (
         <div className="changes">

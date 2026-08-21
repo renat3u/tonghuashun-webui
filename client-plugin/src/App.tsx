@@ -311,6 +311,13 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
           pinned={pinned}
           onTogglePin={() => setPinned((p) => !p)}
           openPath={openPath}
+          depth={{
+            running: currentSummary?.running ?? false,
+            model: currentSummary?.displayTitle,
+            toolCalls: currentInstrument.commitCount,
+            sessions: currentInstrument.sessions,
+            cwd: currentSummary?.cwd ?? currentInstrument.name,
+          }}
         />
       </div>
       <StatusBar engine={engine} />
