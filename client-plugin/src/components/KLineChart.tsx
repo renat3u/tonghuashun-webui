@@ -69,6 +69,14 @@ function visibleWindow(length: number, zoom: number, pan: number): { start: numb
   return { start, count }
 }
 
+/** 画线工具的一条线，坐标为绘图区归一化值（0..1）。 */
+interface DrawLine {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
 function emaSeries(values: readonly number[], period: number): number[] {
   const out: number[] = []
   let prev = values[0] ?? 0
@@ -114,6 +122,43 @@ function bollOf(closes: readonly number[]): { mid: number; up: number; low: numb
   return { mid, up: mid + 2 * sd, low: mid - 2 * sd }
 }
 
+/** 绘制画线工具的线条（归一化坐标）。 */
+function drawAnnotations(
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    W: number; padL: number; padR: number; padT: number; mainH: number; plotW: number
+    lines: readonly DrawLine[]
+    temp: { x: number; y: number } | null
+  },
+): void {
+  const { W, padL, padR, padT, mainH, plotW, lines, temp } = opts
+  const toX = (nx: number) => padL + nx * plotW
+  const toY = (ny: number) => padT + ny * mainH
+  ctx.save()
+  ctx.strokeStyle = 'rgba(120,180,255,.8)'
+  ctx.lineWidth = 1.2
+  ctx.setLineDash([5, 4])
+  for (const line of lines) {
+    ctx.beginPath()
+    ctx.moveTo(toX(line.x1), toY(line.y1))
+    ctx.lineTo(toX(line.x2), toY(line.y2))
+    ctx.stroke()
+  }
+  if (temp !== null) {
+    ctx.beginPath()
+    ctx.moveTo(toX(temp.x), toY(temp.y))
+    ctx.lineTo(toX(temp.x), toY(temp.y))
+    ctx.stroke()
+    ctx.fillStyle = 'rgba(120,180,255,.9)'
+    ctx.beginPath()
+    ctx.arc(toX(temp.x), toY(temp.y), 2.5, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+  void W
+  void padR
+}
+
 export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, style }: Props) {
   const [mode, setMode] = useState<ChartMode>('daily')
   const [info, setInfo] = useState<Info | null>(null)
@@ -123,6 +168,21 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const [toolNotice, setToolNotice] = useState<string | null>(null)
   const [indicator, setIndicator] = useState<'none' | 'macd' | 'kdj' | 'boll'>('none')
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false)
+  const [drawMode, setDrawMode] = useState(false)
+  const [tempPoint, setTempPoint] = useState<{ x: number; y: number } | null>(null)
+  const [drawLines, setDrawLines] = useState<DrawLine[]>(() => {
+    try {
+      const raw = localStorage.getItem(`ths.draw-lines.${code}`)
+      const parsed: unknown = raw === null ? [] : JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.filter((x): x is DrawLine =>
+        typeof x === 'object' && x !== null
+        && typeof (x as DrawLine).x1 === 'number' && typeof (x as DrawLine).y1 === 'number'
+        && typeof (x as DrawLine).x2 === 'number' && typeof (x as DrawLine).y2 === 'number'
+      ) : []
+    } catch {
+      return []
+    }
+  })
   const panRef = useRef<{ x: number; pan: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hoverRef = useRef(-1)
@@ -159,6 +219,15 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     const timer = setTimeout(() => setToolNotice(null), 2200)
     return () => clearTimeout(timer)
   }, [toolNotice])
+
+  // 画线持久化
+  useEffect(() => {
+    try {
+      localStorage.setItem(`ths.draw-lines.${code}`, JSON.stringify(drawLines))
+    } catch {
+      // 隐私模式等场景下存储不可用，忽略
+    }
+  }, [drawLines, code])
 
   const series = useMemo(() => {
     switch (mode) {
@@ -239,6 +308,12 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
         livePrice: mode === 'intraday' && win.start + win.count >= len ? livePrice : null,
       })
     }
+
+    drawAnnotations(ctx, {
+      W, padL, padR, padT, mainH, plotW,
+      lines: drawLines,
+      temp: tempPoint,
+    })
 
     // 信息条
     if (visibleSeries.kind === 'candle') {
@@ -347,6 +422,28 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     paint()
   }
 
+  const onCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!drawMode) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const r = canvas.getBoundingClientRect()
+    const padL = 52
+    const padR = 12
+    const padT = 20
+    const padB = 15
+    const mainH = (r.height - padT - padB) * 0.64
+    const plotW = r.width - padL - padR
+    if (plotW <= 0 || mainH <= 0) return
+    const nx = Math.max(0, Math.min(1, (e.clientX - r.left - padL) / plotW))
+    const ny = Math.max(0, Math.min(1, (e.clientY - r.top - padT) / mainH))
+    if (tempPoint === null) {
+      setTempPoint({ x: nx, y: ny })
+    } else {
+      setDrawLines((prev) => [...prev, { x1: tempPoint.x, y1: tempPoint.y, x2: nx, y2: ny }])
+      setTempPoint(null)
+    }
+  }
+
   const toggleFullscreen = async () => {
     const el = document.documentElement
     try {
@@ -382,7 +479,16 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
             叠加
             <Icon name="chevronDown" size={8} />
           </button>
-          <button title="画线工具" onClick={() => setToolNotice('画线：即将支持')}>画线</button>
+          <button
+            title="画线工具"
+            className={drawMode ? 'tool-active' : undefined}
+            onClick={() => {
+              setDrawMode((v) => !v)
+              setToolNotice(drawMode ? '画线已关闭' : '画线模式：点击两个点画线')
+            }}
+          >
+            画线
+          </button>
           <div className="indicator-select">
             <button title="技术指标" onClick={() => setIndicatorMenuOpen((o) => !o)}>
               指标{indicator !== 'none' ? ` · ${indicator.toUpperCase()}` : ''}
@@ -444,7 +550,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
         <canvas
           ref={canvasRef}
           className="kchart-canvas"
-          style={{ touchAction: 'none' }}
+          style={{ touchAction: 'none', cursor: drawMode ? 'crosshair' : undefined }}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
           onWheel={onWheel}
@@ -453,6 +559,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
           onDoubleClick={onDoubleClick}
+          onClick={onCanvasClick}
           aria-label={`${code} K线图`}
         />
       </div>

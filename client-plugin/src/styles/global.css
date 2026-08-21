@@ -2025,3 +2025,8 @@ button {
   border-top: 1px solid var(--border-soft);
   background: rgba(0, 0, 0, 0.12);
 }
+
+.chart-tools .tool-active {
+  color: var(--accent-red);
+  border-color: var(--accent-red);
+}
