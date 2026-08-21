@@ -69,6 +69,51 @@ function visibleWindow(length: number, zoom: number, pan: number): { start: numb
   return { start, count }
 }
 
+function emaSeries(values: readonly number[], period: number): number[] {
+  const out: number[] = []
+  let prev = values[0] ?? 0
+  const k = 2 / (period + 1)
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i] ?? prev
+    prev = i === 0 ? v : v * k + prev * (1 - k)
+    out.push(prev)
+  }
+  return out
+}
+
+function macdOf(closes: readonly number[]): { dif: number; dea: number; hist: number } | null {
+  if (closes.length < 26) return null
+  const ema12 = emaSeries(closes, 12)
+  const ema26 = emaSeries(closes, 26)
+  const difs = closes.map((_, i) => (ema12[i] ?? 0) - (ema26[i] ?? 0))
+  const deas = emaSeries(difs, 9)
+  const i = closes.length - 1
+  const dif = difs[i] ?? 0
+  const dea = deas[i] ?? 0
+  return { dif, dea, hist: (dif - dea) * 2 }
+}
+
+function kdjOf(candles: readonly Candle[]): { k: number; d: number; j: number } | null {
+  if (candles.length < 9) return null
+  const tail = candles.slice(-9)
+  const highest = Math.max(...tail.map((c) => c.h))
+  const lowest = Math.min(...tail.map((c) => c.l))
+  const close = tail[tail.length - 1]?.c ?? 0
+  const rsv = highest === lowest ? 50 : ((close - lowest) / (highest - lowest)) * 100
+  const k = (2 / 3) * 50 + (1 / 3) * rsv
+  const d = (2 / 3) * 50 + (1 / 3) * k
+  return { k, d, j: 3 * k - 2 * d }
+}
+
+function bollOf(closes: readonly number[]): { mid: number; up: number; low: number } | null {
+  if (closes.length < 20) return null
+  const tail = closes.slice(-20)
+  const mid = tail.reduce((sum, v) => sum + v, 0) / tail.length
+  const variance = tail.reduce((sum, v) => sum + (v - mid) ** 2, 0) / tail.length
+  const sd = Math.sqrt(variance)
+  return { mid, up: mid + 2 * sd, low: mid - 2 * sd }
+}
+
 export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, style }: Props) {
   const [mode, setMode] = useState<ChartMode>('daily')
   const [info, setInfo] = useState<Info | null>(null)
@@ -76,6 +121,8 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState(0)
   const [toolNotice, setToolNotice] = useState<string | null>(null)
+  const [indicator, setIndicator] = useState<'none' | 'macd' | 'kdj' | 'boll'>('none')
+  const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false)
   const panRef = useRef<{ x: number; pan: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hoverRef = useRef(-1)
@@ -127,6 +174,21 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
         return { kind: 'candle' as const, candles: daily }
     }
   }, [mode, daily, weekly, monthly, intraday, fiveDay])
+
+  const indicatorText = useMemo(() => {
+    if (indicator === 'none') return null
+    const closes = daily.map((c) => c.c)
+    if (indicator === 'macd') {
+      const m = macdOf(closes)
+      return m === null ? null : `MACD DIF ${fmtToken(m.dif)} · DEA ${fmtToken(m.dea)} · HIST ${fmtToken(m.hist)}`
+    }
+    if (indicator === 'kdj') {
+      const k = kdjOf(daily)
+      return k === null ? null : `KDJ K ${k.k.toFixed(1)} · D ${k.d.toFixed(1)} · J ${k.j.toFixed(1)}`
+    }
+    const b = bollOf(closes)
+    return b === null ? null : `BOLL UP ${fmtToken(b.up)} · MID ${fmtToken(b.mid)} · LOW ${fmtToken(b.low)}`
+  }, [indicator, daily])
 
   const paint = () => {
     const canvas = canvasRef.current
@@ -321,10 +383,20 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
             <Icon name="chevronDown" size={8} />
           </button>
           <button title="画线工具" onClick={() => setToolNotice('画线：即将支持')}>画线</button>
-          <button title="技术指标" onClick={() => setToolNotice('指标：即将支持（MACD/KDJ/BOLL）')}>
-            指标
-            <Icon name="chevronDown" size={8} />
-          </button>
+          <div className="indicator-select">
+            <button title="技术指标" onClick={() => setIndicatorMenuOpen((o) => !o)}>
+              指标{indicator !== 'none' ? ` · ${indicator.toUpperCase()}` : ''}
+              <Icon name="chevronDown" size={8} />
+            </button>
+            {indicatorMenuOpen && (
+              <div className="indicator-menu">
+                <button onClick={() => { setIndicator('none'); setIndicatorMenuOpen(false) }}>无</button>
+                <button onClick={() => { setIndicator('macd'); setIndicatorMenuOpen(false) }}>MACD</button>
+                <button onClick={() => { setIndicator('kdj'); setIndicatorMenuOpen(false) }}>KDJ</button>
+                <button onClick={() => { setIndicator('boll'); setIndicatorMenuOpen(false) }}>BOLL</button>
+              </div>
+            )}
+          </div>
           <button title="全屏" onClick={() => void toggleFullscreen()}>
             <Icon name="expand" size={11} />
           </button>
@@ -368,6 +440,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
             )}
           </div>
         )}
+        {indicatorText !== null && <div className="indicator-line">{indicatorText}</div>}
         <canvas
           ref={canvasRef}
           className="kchart-canvas"

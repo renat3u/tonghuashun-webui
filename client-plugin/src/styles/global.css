@@ -1982,3 +1982,46 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.indicator-select {
+  position: relative;
+  display: flex;
+}
+
+.indicator-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 90px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.indicator-menu button {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 11px;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.indicator-menu button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.indicator-line {
+  padding: 4px 12px;
+  font-size: 10px;
+  color: var(--dim);
+  font-family: var(--mono);
+  border-top: 1px solid var(--border-soft);
+  background: rgba(0, 0, 0, 0.12);
+}
