@@ -91,6 +91,20 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     return () => clearInterval(id)
   }, [crash])
 
+  // 全局 1~5 快捷键切换周期
+  useEffect(() => {
+    const onMode = (event: Event) => {
+      const detail = (event as CustomEvent<ChartMode>).detail
+      if (detail === undefined) return
+      setMode(detail)
+      hoverRef.current = -1
+      setZoom(1)
+      setPan(0)
+    }
+    window.addEventListener('ths:chart-mode', onMode)
+    return () => window.removeEventListener('ths:chart-mode', onMode)
+  }, [])
+
   const series = useMemo(() => {
     switch (mode) {
       case 'weekly':

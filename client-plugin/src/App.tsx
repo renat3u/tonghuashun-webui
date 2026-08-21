@@ -170,6 +170,12 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
         const input = document.querySelector<HTMLInputElement>('.top-search input')
         input?.focus()
         input?.select()
+      } else if (!typing && ['1', '2', '3', '4', '5'].includes(e.key)) {
+        const modes = ['intraday', 'fiveday', 'daily', 'weekly', 'monthly'] as const
+        const mode = modes[Number(e.key) - 1]
+        if (mode !== undefined) {
+          window.dispatchEvent(new CustomEvent('ths:chart-mode', { detail: mode }))
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)
