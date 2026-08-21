@@ -8,7 +8,7 @@
  * 十字光标、轴价格标签、OHLC 信息条、重构日标注（大红烛 + 绿柱一砸到底）。
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { fmt, fmtToken, fmtPct, fmtTime, fmtDateSlash } from '../lib/format'
+import { fmt, fmtToken, fmtPct } from '../lib/format'
 import {
   aggregateMonthly,
   aggregateWeekly,
@@ -16,6 +16,7 @@ import {
   type Candle,
   type IntradayPoint,
 } from '../lib/market'
+import { candleInfoOf, chartEmptyText, lineInfoOf } from '../lib/chart'
 import { Icon } from './icons'
 
 export type ChartMode = 'intraday' | 'fiveday' | 'daily' | 'weekly' | 'monthly'
@@ -298,6 +299,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   }, [indicator, daily])
 
   const overlayDaily = overlayCode !== null ? overlaySeries?.get(overlayCode) : undefined
+  const dataEmpty = series.kind === 'candle' ? series.candles.length === 0 : series.points.length === 0
 
   const paint = () => {
     const canvas = canvasRef.current
@@ -359,21 +361,15 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       temp: tempPoint,
     })
 
-    // 信息条
+    // 信息条（空数组由纯函数返回 null，避免访问 undefined 属性）
     if (visibleSeries.kind === 'candle') {
-      const n = visibleSeries.candles.length
-      if (n === 0) return
-      const idx = hover >= 0 && hover < n ? hover : n - 1
-      const k = visibleSeries.candles[idx]
-      const chg = (k.c - k.o) / k.o * 100
-      setInfoRef.current({ kind: 'candle', date: fmtDateSlash(new Date(k.t)), o: k.o, h: k.h, l: k.l, c: k.c, chg, loc: k.loc })
+      const info = candleInfoOf(visibleSeries.candles, hover)
+      if (info === null) return
+      setInfoRef.current({ kind: 'candle', ...info })
     } else {
-      const n = visibleSeries.points.length
-      if (n === 0) return
-      const idx = hover >= 0 && hover < n ? hover : n - 1
-      const p = visibleSeries.points[idx]
-      const time = visibleSeries.intraday ? fmtTime(p.t % 24) : fmtDateSlash(new Date(p.t))
-      setInfoRef.current({ kind: 'line', time, p: p.p, avg: p.avg, vol: p.vol })
+      const info = lineInfoOf(visibleSeries.points, hover, visibleSeries.intraday)
+      if (info === null) return
+      setInfoRef.current({ kind: 'line', ...info })
     }
   }
 
@@ -613,6 +609,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
           </div>
         )}
         {indicatorText !== null && <div className="indicator-line">{indicatorText}</div>}
+        {dataEmpty && <div className="chart-empty">{chartEmptyText(mode)}</div>}
         <canvas
           ref={canvasRef}
           className="kchart-canvas"
@@ -946,7 +943,23 @@ interface LineViewOpts {
 
 function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
   const { W, padL, padR, padT, mainH, volTop, volH, plotW, points, intraday, crash, hover, baseMinute, livePrice } = o
-  if (points.length === 0) return
+  if (points.length === 0) {
+    // 空数据不再只是空白画布：给出明确的等待/暂无提示
+    ctx.save()
+    ctx.fillStyle = 'rgba(14,19,32,.55)'
+    ctx.fillRect(padL, padT, plotW, mainH + volH)
+    ctx.fillStyle = AXIS
+    ctx.font = '12px "PingFang SC", "Noto Sans SC", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(
+      intraday ? '暂无分时数据，等待真实行情…' : '暂无5日数据，等待真实行情…',
+      padL + plotW / 2,
+      padT + mainH / 2,
+    )
+    ctx.restore()
+    return
+  }
   const n = points.length
   const slot = plotW / n
   const bw = Math.max(1, slot * 0.62)

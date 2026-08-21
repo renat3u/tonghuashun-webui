@@ -121,33 +121,27 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
   )
   const hasRealWorkspaces = workspaceRows.length > 0
 
-  // live 数据到达且当前选中不在真实工作区列表时，切到第一个工作区。
-  // 注意：有真实 workspace 时不再与下面的“真实工作区选中同步”打架，
-  // 否则会在 mock 首代码和真实工作区代码之间来回切换，造成界面闪烁。
-  useEffect(() => {
-    if (hasRealWorkspaces) return
-    if (liveSnapshot === null) return
-    if (engine.static.instruments.some((x) => x.code === selected)) return
-    const first = engine.static.instruments[0]
-    if (first !== undefined) setSelected(first.code)
-  }, [hasRealWorkspaces, liveSnapshot, engine.static, selected])
+  // 统一的可选代码列表：有真实 workspace 时只用真实列表，否则用（实时/模拟）行情表。
+  // 由单一 effect 负责把 selected 同步进当前数据源，避免两个 effect 互相抢选中造成闪烁。
+  const selectableCodes = useMemo(
+    () => hasRealWorkspaces
+      ? workspaceRows.map((r) => r.code)
+      : engine.static.instruments.map((i) => i.code),
+    [hasRealWorkspaces, workspaceRows, engine.static.instruments],
+  )
 
-  // 有真实工作区时，把选中项切到真实列表；没有真实数据时仍走模拟行情。
   useEffect(() => {
-    if (!hasRealWorkspaces) return
-    if (workspaceRows.some((r) => r.code === selected)) return
-    const first = workspaceRows[0]
-    if (first !== undefined) setSelected(first.code)
-  }, [hasRealWorkspaces, workspaceRows, selected])
+    if (selectableCodes.length === 0) return
+    if (selectableCodes.includes(selected)) return
+    const first = selectableCodes[0]
+    if (first !== undefined) setSelected(first)
+  }, [selectableCodes, selected])
 
   // 始终解析到有效代码（live 数据到达而 selected 尚未切换的过渡帧不产生空序列）
   const resolvedCode = useMemo(() => {
-    if (hasRealWorkspaces) {
-      return workspaceRows.some((r) => r.code === selected) ? selected : (workspaceRows[0]?.code ?? selected)
-    }
-    if (engine.static.instruments.some((x) => x.code === selected)) return selected
-    return engine.static.instruments[0]?.code ?? selected
-  }, [hasRealWorkspaces, workspaceRows, selected, engine.static])
+    if (selectableCodes.includes(selected)) return selected
+    return selectableCodes[0] ?? selected
+  }, [selectableCodes, selected])
 
   const instrument = useMemo(() => {
     if (hasRealWorkspaces) {

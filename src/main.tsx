@@ -10,7 +10,7 @@ import {
   type ConvMessage,
   type TrajStep,
 } from '../client-plugin/src/data/trajectory'
-import type { ChatOwnerProps, SessionListStateLike } from '../client-plugin/src/contract'
+import type { ChatOwnerProps, SessionListStateLike, WorkspaceListStateLike } from '../client-plugin/src/contract'
 
 /**
  * 独立开发外壳（Vite，:5173）：无 DSH 运行时，用演示会话状态驱动 App：
@@ -27,11 +27,24 @@ const DEMO_SESSIONS: SessionListStateLike = {
   phase: 'ready',
 }
 
+const DEMO_WORKSPACES: WorkspaceListStateLike = {
+  items: [],
+  state: 'ready',
+  phase: 'ready',
+  baselinesReady: true,
+  recentWorkspaceId: undefined,
+}
+
 const now = () => new Date().toTimeString().slice(0, 8)
 
 /** 演示 useSessions 座位：常量快照。 */
 function useDemoSessions<S>(sel: (s: SessionListStateLike) => S): S {
   return sel(DEMO_SESSIONS)
+}
+
+/** 演示 useWorkspaces 座位：独立开发外壳无真实工作区，走模拟行情。 */
+function useDemoWorkspaces<S>(sel: (s: WorkspaceListStateLike) => S): S {
+  return sel(DEMO_WORKSPACES)
 }
 
 function DemoChat({ selectedName }: ChatOwnerProps) {
@@ -90,8 +103,11 @@ createRoot(container).render(
   <StrictMode>
     <App
       useSessions={useDemoSessions}
+      useWorkspaces={useDemoWorkspaces}
       openSession={() => {}}
       newSession={() => {}}
+      openPath={async () => {}}
+      command={async () => true}
       renderChat={(owner) => <DemoChat selectedName={owner.selectedName} />}
     />
   </StrictMode>,

@@ -67,24 +67,25 @@
 
 `client-plugin/src/App.tsx`：
 
-- 把“live 数据自动切换选中”的 effect 加上 gate：
+- 第一阶段：把“live 数据自动切换选中”的 effect 加上 gate：
   ```ts
   if (hasRealWorkspaces) return
   ```
-- 有真实 workspace 时，只由“真实工作区选中同步” effect 负责切换，避免两个 effect 互相覆盖。
+  有真实 workspace 时，只由“真实工作区选中同步” effect 负责切换，避免两个 effect 互相覆盖。
+- 接续阶段（见 6.1）：进一步把两个 effect 合并为 `selectableCodes` + 单一同步 effect，从结构上消除竞争。
 
 ### 3.2 修复分时/5日黑屏
 
 `client-plugin/src/components/KLineChart.tsx`：
 
-- 在 `paint()` 线图信息条前增加空数组保护：
+- 在 `paint()` 线图信息条前增加空数组保护（现由 `lineInfoOf()` 纯函数实现）：
   ```ts
   const n = visibleSeries.points.length
   if (n === 0) return
   ```
-- 在 `drawLineView()` 开头增加：
+- 在 `drawLineView()` 开头增加空数组分支：
   ```ts
-  if (points.length === 0) return
+  if (points.length === 0) { /* 绘制灰底 + 暂无数据文案 */ return }
   ```
 
 ## 4. 验证结果
@@ -101,9 +102,58 @@
   - 无 root error；
   - 无 console error。
 
-## 5. 后续可继续改进
+## 5. 后续改进（本次接续已完成）
 
-1. **简化选中状态管理**：把“实时标的”和“真实工作区”两种数据源统一成一个 selector，避免多 effect 竞争。
-2. **空数据图表状态**：当前没有真实数据时 `intraday`/`fiveDay` 为空，虽然不再崩溃，但显示为空白画布；可以增加“等待真实行情/暂无分时数据”的图表空态。
-3. **线图空数据占位**：在 `drawLineView` 中绘制“暂无数据”文案或灰底。
-4. **回归测试**：为 `KLineChart` 的空数组场景增加单元测试，防止后续再次回归。
+1. **简化选中状态管理**：已统一成一个 selector + 单一同步 effect，避免多 effect 竞争。
+2. **空数据图表状态**：已增加“等待真实行情/暂无数据”的图表空态。
+3. **线图空数据占位**：已在 `drawLineView` 中绘制“暂无分时/5日数据”文案 + 灰底。
+4. **回归测试**：已增加 `tests/chart.test.ts`，覆盖空数组不抛错、信息条取值、空态文案等场景。
+
+## 6. 接续改进的落地明细
+
+### 6.1 选中状态统一（App.tsx）
+
+- 新增 `selectableCodes`，由 `hasRealWorkspaces` 决定数据源：
+  - 有真实工作区：`workspaceRows.map(r => r.code)`；
+  - 否则：`engine.static.instruments.map(i => i.code)`。
+- 原来的两个 `useEffect` 合并为一个：
+  ```ts
+  useEffect(() => {
+    if (selectableCodes.length === 0) return
+    if (selectableCodes.includes(selected)) return
+    const first = selectableCodes[0]
+    if (first !== undefined) setSelected(first)
+  }, [selectableCodes, selected])
+  ```
+- `resolvedCode` 也改用同一份 `selectableCodes`，避免重复判断。
+
+### 6.2 图表空态（KLineChart.tsx + global.css）
+
+- 新增 `dataEmpty` 判断，空数据时在 `chart-body` 渲染 `.chart-empty` 覆盖层，文案由 `chartEmptyText(mode)` 给出。
+- `drawLineView()` 在 `points.length === 0` 时不再直接返回，而是绘制灰底 + “暂无分时数据 / 暂无5日数据，等待真实行情…”。
+- 新增 `.chart-empty` CSS（绝对定位、居中、半透明背景、不拦截鼠标事件）。
+
+### 6.3 纯函数抽取与回归测试（lib/chart.ts + tests/chart.test.ts）
+
+- 新增 `client-plugin/src/lib/chart.ts`：
+  - `lineInfoOf(points, hover, intraday)`：空数组返回 `null`，从根上避免 `points[n-1]` 为 `undefined` 后读 `p.t`；
+  - `candleInfoOf(candles, hover)`：蜡烛图信息条的同款安全取值；
+  - `chartEmptyText(mode)`：各视图空态文案。
+- 新增 `tests/chart.test.ts`，共 6 个用例，覆盖：
+  - 分时/5日空数组返回 `null` 且不抛错；
+  - 悬停/末点取值；
+  - 蜡烛图空数组安全；
+  - 各视图空态文案。
+
+### 6.4 独立开发外壳补全 props（src/main.tsx）
+
+- `App` 新增的 `useWorkspaces` / `openPath` / `command` 也在独立开发外壳中补齐：
+  - 演示 `useWorkspaces` 返回空工作区列表（走模拟行情）；
+  - `openPath` / `command` 提供无副作用 demo 实现。
+- 这同时修复了 `npm run typecheck` 原先在 `src/main.tsx` 上报的 `AppProps` 缺参错误。
+
+## 7. 验证结果（本次接续）
+
+- `npm run typecheck`：通过。
+- `npm test`：51 个用例全部通过（原 45 + 新增 6）。
+- `npm run build`：通过，`dist/` 正常产出。

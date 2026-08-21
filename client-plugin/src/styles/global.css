@@ -1388,6 +1388,19 @@ button {
   min-height: 0;
 }
 
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-size: 12px;
+  background: rgba(16, 20, 34, 0.35);
+  pointer-events: none;
+}
+
 #kchart,
 .kchart-canvas {
   position: absolute;
