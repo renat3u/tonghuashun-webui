@@ -84,8 +84,9 @@
 
 ### Phase 4：盘口 / 成交 / 流向（P1）
 
-- [ ] 4.1 五档盘口 = Harness 队列/工具/子代理
-  - 展示当前会话 pending queue、运行中 tool call、子代理、jobs。
+- [x] 4.1 五档盘口 = Harness 队列/工具/子代理
+  - 已新增“盘口”页签，展示运行状态/会话/工具调用/关联会话；
+  - pending queue、子代理、jobs 待补。
 - [ ] 4.2 分时成交真实化
   - 每分钟 Token 消耗来自真实 snapshot；
   - 点击成交行跳转对应 Trajectory 事件。
