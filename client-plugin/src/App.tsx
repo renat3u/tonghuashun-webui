@@ -259,6 +259,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
           selected={selected}
           onSelect={setSelected}
           workspaceRows={workspaceRows}
+          realWorkspacesReady={workspaceState.baselinesReady}
           collapsed={railCollapsed}
           onToggleCollapse={() => setRailCollapsed((v) => !v)}
           onNotice={setNotice}

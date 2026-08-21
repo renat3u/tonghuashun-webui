@@ -9,6 +9,8 @@ interface Props {
   onSelect: (code: string) => void
   /** 真实 DSH 工作区行；非空时优先展示，否则回退模拟 watchlist。 */
   workspaceRows?: WorkspaceRow[]
+  /** 真实 workspace 基线是否已就绪；就绪且无行时显示空态。 */
+  realWorkspacesReady?: boolean
   /** 左栏折叠状态。 */
   collapsed?: boolean
   /** 切换左栏折叠。 */
@@ -29,8 +31,9 @@ const NAV: { label: string; icon: IconName; active?: boolean; title: string }[] 
   { label: '设置', icon: 'gear', title: '打开设置界面（集成点）' },
 ]
 
-export function Rail({ engine, selected, onSelect, workspaceRows, collapsed = false, onToggleCollapse, onNotice, favoriteCodes, onToggleFavorite }: Props) {
+export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspacesReady = false, collapsed = false, onToggleCollapse, onNotice, favoriteCodes, onToggleFavorite }: Props) {
   const realRows = workspaceRows ?? []
+  const showEmpty = realWorkspacesReady && realRows.length === 0
   const watchList = realRows.length > 0
     ? realRows.map((row) => ({
         code: row.code,
@@ -41,7 +44,9 @@ export function Rail({ engine, selected, onSelect, workspaceRows, collapsed = fa
         sessions: row.sessions,
         toolCalls: row.toolCalls,
       }))
-    : engine.static.instruments.filter((x) => x.code !== 'DSH001').map((ins) => {
+    : showEmpty
+      ? []
+      : engine.static.instruments.filter((x) => x.code !== 'DSH001').map((ins) => {
         const q = engine.quotes.get(ins.code)
         return {
           code: ins.code,
