@@ -267,6 +267,9 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
           >
             <span className="grip" />
           </div>
+          {hasRealWorkspaces && liveSnapshot === null && (
+            <div className="ths-empty">真实行情等待中：工作区已接入，等待 meter 快照…</div>
+          )}
           <KLineChart
             code={resolvedCode}
             daily={daily}

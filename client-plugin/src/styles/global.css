@@ -550,6 +550,7 @@ button {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  position: relative;
 }
 
 /* 对话 / Trajectory */
@@ -1871,4 +1872,19 @@ button {
   padding: 8px 14px;
   pointer-events: none;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.ths-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  color: var(--faint);
+  font-size: 12px;
+  background: rgba(16, 20, 34, 0.85);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px 16px;
+  pointer-events: none;
 }
