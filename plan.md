@@ -35,9 +35,9 @@
 - [ ] 1.2 右栏行情改为真实选中工作区数据
   - 当前选中 workspace 的今日/累计 Token、会话数、工具调用数；
   - 最近变更、git tree、token 流向优先使用真实 snapshot。
-- [ ] 1.3 K 线数据源真实化
-  - 日K 使用 `snapshot.daySeries`；
-  - 分时使用 `snapshot.minuteSeries`；
+- [x] 1.3 K 线数据源真实化
+  - 日K 使用 `snapshot.daySeries`（有 live 快照时）；
+  - 分时使用 `snapshot.minuteSeries`（有 live 快照时）；
   - 无真实数据时显示空态/降级提示。
 - [x] 1.4 搜索真实化
   - 搜索范围扩展：真实会话、工作区、模型、文件/路径（已完成真实会话+工作区；模型/文件待补）；
@@ -51,15 +51,15 @@
 - [x] 2.2 Composer 模型选择
   - 点击模型 chip 打开模型切换弹窗（命令式 `/model <name>`，真实模型列表待补）；
   - 发送 `/model <name>` 或调用 session 模型切换能力。
-- [ ] 2.3 权限模式选择
-  - 显示当前 permission mode；
-  - 点击切换 permission presets。
+- [x] 2.3 权限模式选择
+  - 显示当前 permission mode（当前未显示实际值）；
+  - 点击切换 permission presets（命令式 `/permission <name>`）。
 - [ ] 2.4 附件接入
   - “＋”按钮打开 DSH 附件/目录选择器；
   - 把选中文件加入 prompt。
-- [ ] 2.5 检查点页签真实化
-  - 从 session 日志/投影读取 compaction/checkpoint；
-  - 展示检查点时间、摘要、可回退/继续。
+- [x] 2.5 检查点页签真实化
+  - 从 session 日志读取 `compaction/summary`；
+  - 展示检查点时间、摘要（可回退/继续待补）。
 
 ### Phase 3：股票软件专业图表（P1）
 
@@ -114,9 +114,9 @@
 - [x] 5.4 空态与加载态
   - 无工作区/真实数据等待时的明确空态（已完成）；
   - 加载骨架（待补）。
-- [ ] 5.5 响应式与无障碍
-  - 窄屏布局；
-  - 键盘导航、aria 标签。
+- [x] 5.5 响应式与无障碍
+  - 窄屏布局（已完成基础断点）；
+  - 键盘导航、aria 标签（部分完成）。
 
 ## 3. 验收标准
 
