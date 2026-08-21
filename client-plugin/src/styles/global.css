@@ -1295,6 +1295,7 @@ button {
   flex-direction: column;
   background: var(--panel);
   border-top: 1px solid var(--border);
+  position: relative;
 }
 
 .chart-tabs {
@@ -1887,4 +1888,19 @@ button {
   border-radius: 8px;
   padding: 10px 16px;
   pointer-events: none;
+}
+
+.chart-tool-notice {
+  position: absolute;
+  right: 10px;
+  top: 34px;
+  z-index: 30;
+  background: rgba(20, 26, 42, 0.95);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  border-radius: 6px;
+  padding: 6px 10px;
+  pointer-events: none;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }

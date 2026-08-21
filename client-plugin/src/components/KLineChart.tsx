@@ -75,6 +75,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const [pulse, setPulse] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState(0)
+  const [toolNotice, setToolNotice] = useState<string | null>(null)
   const panRef = useRef<{ x: number; pan: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hoverRef = useRef(-1)
@@ -104,6 +105,13 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     window.addEventListener('ths:chart-mode', onMode)
     return () => window.removeEventListener('ths:chart-mode', onMode)
   }, [])
+
+  // 图表工具轻提示自动消失
+  useEffect(() => {
+    if (toolNotice === null) return
+    const timer = setTimeout(() => setToolNotice(null), 2200)
+    return () => clearTimeout(timer)
+  }, [toolNotice])
 
   const series = useMemo(() => {
     switch (mode) {
@@ -298,22 +306,22 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
             {m.label}
           </button>
         ))}
-        <button className="ct">
+        <button className="ct" onClick={() => setToolNotice('更多菜单：即将支持（指标/坐标/参数设置）')}>
           更多
           <Icon name="chevronDown" size={8} />
         </button>
         <span className="grow" />
         <div className="chart-tools">
-          <button title="前复权（LOC 口径）">
+          <button title="前复权（LOC 口径）" onClick={() => setToolNotice('前复权：即将支持')}>
             前复权
             <Icon name="chevronDown" size={8} />
           </button>
-          <button title="叠加标的">
+          <button title="叠加标的" onClick={() => setToolNotice('叠加：即将支持')}>
             叠加
             <Icon name="chevronDown" size={8} />
           </button>
-          <button title="画线工具">画线</button>
-          <button title="技术指标">
+          <button title="画线工具" onClick={() => setToolNotice('画线：即将支持')}>画线</button>
+          <button title="技术指标" onClick={() => setToolNotice('指标：即将支持（MACD/KDJ/BOLL）')}>
             指标
             <Icon name="chevronDown" size={8} />
           </button>
@@ -322,6 +330,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
           </button>
         </div>
       </div>
+      {toolNotice !== null && <div className="chart-tool-notice">{toolNotice}</div>}
       <div className="chart-body">
         {info && (
           <div className="ohlc">
