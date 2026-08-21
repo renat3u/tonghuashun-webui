@@ -1927,3 +1927,30 @@ button {
   pointer-events: none;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
+
+/* ---------- 响应式：窄屏优先保留中栏，隐藏侧栏 ---------- */
+@media (max-width: 1280px) {
+  .quote {
+    width: 220px;
+    flex-basis: 220px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .quote {
+    display: none;
+  }
+  .rail {
+    width: 180px;
+    flex-basis: 180px;
+  }
+}
+
+@media (max-width: 760px) {
+  .rail {
+    display: none;
+  }
+  .top-indices {
+    display: none;
+  }
+}
