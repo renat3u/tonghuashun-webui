@@ -2030,3 +2030,44 @@ button {
   color: var(--accent-red);
   border-color: var(--accent-red);
 }
+
+.command-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(6, 10, 20, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 15vh;
+}
+
+.command-palette {
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.command-palette input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  outline: none;
+}
+.command-palette input:focus {
+  border-color: #4d6bfe;
+}
+
+.command-hints {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: var(--faint);
+}

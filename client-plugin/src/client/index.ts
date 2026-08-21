@@ -100,6 +100,13 @@ function makeRootOps(ctx: ClientContext): RootOps {
     openPath(path) {
       return ctx.workspaces.openPath(path)
     },
+    async command(line) {
+      const id = currentSessionId(ctx)
+      const face = id !== undefined ? ctx.sessions.binding(id)?.session : undefined
+      if (face === undefined) return false
+      const result = await face.command(line)
+      return result.ok
+    },
   }
 }
 

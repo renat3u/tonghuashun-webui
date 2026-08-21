@@ -283,6 +283,8 @@ export interface RootOps {
   newSession(): void
   /** 用系统默认应用打开一个路径（文件/目录）。 */
   openPath(path: string): Promise<void>
+  /** 对当前会话执行一条斜杠命令。 */
+  command(line: string): Promise<boolean>
 }
 
 /** ChatPanel 槽的 owner 面（TerminalRoot 经 renderSlot 下传）。 */

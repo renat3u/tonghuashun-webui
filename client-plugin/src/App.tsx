@@ -37,6 +37,8 @@ export interface AppProps {
   newSession: () => void
   /** 用系统默认应用打开路径（root inject 面回调）。 */
   openPath: (path: string) => Promise<void>
+  /** 对当前会话执行斜杠命令（root inject 面回调）。 */
+  command: (line: string) => Promise<boolean>
   /** 渲染 ChatPanel 槽位（TerminalRoot 的 renderSlot 绑定）。 */
   renderChat: (owner: ChatOwnerProps) => ReactNode
 }
@@ -89,11 +91,13 @@ const EMPTY_INSTRUMENT: Instrument = {
   seed: 0,
 }
 
-export default function App({ useSessions, useWorkspaces, openSession, newSession, openPath, renderChat }: AppProps) {
+export default function App({ useSessions, useWorkspaces, openSession, newSession, openPath, command, renderChat }: AppProps) {
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandDraft, setCommandDraft] = useState('')
   const [favoriteCodes, setFavoriteCodes] = useState<ReadonlySet<string>>(() => {
     try {
       const raw = localStorage.getItem('ths.favorite-codes')
@@ -197,6 +201,10 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
         const input = document.querySelector<HTMLInputElement>('.top-search input')
         input?.focus()
         input?.select()
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p' && !typing) {
+        e.preventDefault()
+        setCommandOpen(true)
+        setCommandDraft('')
       } else if (!typing && ['1', '2', '3', '4', '5'].includes(e.key)) {
         const modes = ['intraday', 'fiveday', 'daily', 'weekly', 'monthly'] as const
         const mode = modes[Number(e.key) - 1]
@@ -226,6 +234,14 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     const timer = setTimeout(() => setNotice(null), 2600)
     return () => clearTimeout(timer)
   }, [notice])
+
+  const runCommand = async () => {
+    const line = commandDraft.trim()
+    if (line.length === 0) return
+    setCommandOpen(false)
+    setCommandDraft('')
+    await command(line)
+  }
 
   /** 拖动分隔条调整图表高度（窗口级监听，越过画布/iframe 也不丢事件）。 */
   const startChartResize = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -331,6 +347,30 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
         <div className="demo-badge">{isLiveBridge() ? '正在连接数据…' : 'demo · mock market'}</div>
       )}
       {notice !== null && <div className="ths-toast">{notice}</div>}
+      {commandOpen && (
+        <div className="command-overlay" onClick={() => setCommandOpen(false)}>
+          <div className="command-palette" onClick={(e) => e.stopPropagation()}>
+            <input
+              autoFocus
+              value={commandDraft}
+              placeholder="输入 DSH 命令，如 /model deepseek-v4"
+              onChange={(e) => setCommandDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void runCommand()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setCommandOpen(false)
+                }
+              }}
+            />
+            <div className="command-hints">
+              常用：/model &lt;name&gt; · /permission &lt;preset&gt; · /compact · /help
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
