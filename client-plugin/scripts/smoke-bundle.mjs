@@ -98,12 +98,6 @@ const ctx = {
     list: emptyList,
     startSession() {},
   },
-  reflect: {
-    provide(name, value) {
-      provided.push({ name, value })
-      return () => {}
-    },
-  },
   effect(fn, label) {
     effects.push(label)
     // 真实 cordis 立即执行 effect 体，返回值作为释放器
@@ -123,8 +117,6 @@ const chatSpec = rootEntry.options.children?.['terminal.chat']
 if (!chatSpec || chatSpec.kind !== 'single' || chatSpec.scope !== 'session-maybe') {
   throw new Error(`unexpected terminal.chat spec: ${JSON.stringify(chatSpec)}`)
 }
-if (!provided.some((p) => p.name === 'layout')) throw new Error('expected layout placeholder service')
-
 // SSR 冒烟：用桩 props 组装 root 组件树（renderSlot -> ChatPanel + 其 inject 面）
 const { renderToString } = requireRoot('react-dom/server')
 const chatInject = chatEntry.options.inject?.(undefined) ?? {}

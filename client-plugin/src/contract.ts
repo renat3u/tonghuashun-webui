@@ -6,10 +6,10 @@
  * 独立构建（out-of-tree）不解析 monorepo 包类型，因此这里用与真实签名
  * 逐一对应的结构声明；运行时由外壳提供的真实服务满足。改动前对照
  * packages/client/runtime、packages/client/ui-slots 与 packages/client/web 的
- * SlotMap / register / reflect / sessions / workspaces。
+ * SlotMap / register / sessions / workspaces。
  *
- * 0812 快照：外壳伪条目 dsh-client-app-shell 注入 slots+sessions+layout 后
- * 才渲染 root；ui-layout 被禁用时本插件需自己提供 layout 服务占位。
+ * DSH 0.1.1-rc.1：dsh-client-runtime 内置 'root' 单槽；ui-layout 被禁用后
+ * 本插件直接注册 root 接管界面，无需再提供 layout 占位服务。
  * P0 对话接入：root 声明子槽 terminal.chat（single / session-maybe），
  * ChatPanel 注册进该槽获得框架 useSession 座位；send/cancel/newSession
  * 回调经 inject 面下发。
@@ -307,11 +307,6 @@ export interface SlotsLike {
   inject(key: string, callback: () => () => void): () => void
 }
 
-/** reflect 服务的提供面（ctx.reflect）。 */
-export interface ReflectLike {
-  provide(name: string, value: unknown): () => void
-}
-
 /** 会话节点定义注册面（runtime conversationEvents 的结构子集）。 */
 export interface ConversationEventsLike {
   register(definition: unknown): () => void
@@ -329,7 +324,6 @@ export interface ClientContext {
   workspaces: IWorkspacesLike
   conversationEvents: ConversationEventsLike
   conversationViews: ConversationViewsLike
-  reflect: ReflectLike
   /** cordis 效果：返回释放器；fiber 销毁时执行。 */
   effect(effect: () => () => void, label?: string): void
 }

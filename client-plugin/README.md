@@ -27,7 +27,9 @@ pnpm dsh plugin --profile web add "<repo>/client-plugin"
 
 # 3. 禁用默认 web UI 行 —— 默认组合里 ui-layout 已注册 'root'，
 #    直接注册会报 "single slot root already has a registration"。
-#    把 deploy/web-terminal.patch.yml 的行合并进 profile 用户层：
+#    DSH 0.1.1-rc.1 的 overlay 见 deploy/web-terminal.patch.yml（除 ui-layout 外
+#    还禁用 ui-brand-official / ui-attachment / ui-reference 等默认 UI 行）。
+#    把其中的行合并进 profile 用户层：
 #      ~/.dsh/profiles/web/cordis.patch.yml
 #    或启动时叠加：
 pnpm dsh --profile web --patch "<repo>/client-plugin/deploy/web-terminal.patch.yml"
@@ -36,12 +38,15 @@ pnpm dsh --profile web --patch "<repo>/client-plugin/deploy/web-terminal.patch.y
 ```
 
 > overlay 只禁用注册进默认布局槽位的 UI 行；connection / api-remotes /
-> client-runtime / modules / webserver 等基础设施行保留。
-> 0812 快照实测确认的启用/禁用边界：
->   - 保留 ui-theme / locale / **ui-settings**（纯服务提供者：theme、i18n、
->     settingsScope；ui-settings 的 inject=[] 且不注册槽位，禁了会卡 boot 激活门）；
+> client-runtime / modules / webserver / ui-renderer 等基础设施行保留。
+> DSH 0.1.1-rc.1 实测确认的启用/禁用边界：
+>   - 保留 ui-theme / locale / **ui-settings** / **ui-renderer**（服务提供者 /
+>     slot renderer 安装者；ui-settings 的 inject=[] 且不注册槽位，禁了会卡 boot 激活门）；
 >   - 禁用 session-log-download（其客户端半注入默认 UI 的服务）；
->   - 本插件提供 layout 占位服务（app-shell 激活门），注册 'root'。
+>   - 禁用 ui-brand-official / ui-attachment / ui-reference（它们注册进
+>     ui-layout / ui-conversation 声明的子槽；默认 UI 行被禁后槽不存在，直接注册会报
+>     undeclared slot）；
+>   - 本插件注册 'root'（运行时内置单槽，无需再提供 app-shell 占位）。
 > 上游 web-app 新增 UI 行时需同步补进 overlay（已知维护点，见 Limitations）。
 
 ## 验证
