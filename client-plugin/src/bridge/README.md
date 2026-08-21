@@ -46,8 +46,10 @@ interface DshProvider {
    剩余工作是把它映射进 `useMarketEngine` 的数据模型（`minuteSeries`→分时成交、
    `daySeries`→日K、`workspaces`→关注项目、`today.byModel`→token流向），成功后
    LiveProvider 切换真实数据、隐藏 demo 徽标。
-2. **左栏入口**：`Rail` 的「技能 / 插件 / 设置」三个导航项对应 DSH 的 skills 窗口、插件窗口、设置界面，
-   插件注入后改为调用 DSH 面板 API 打开对应窗口（当前为 tooltip 占位）。
+2. **左栏入口**：`Rail` 的「技能 / 插件 / 设置」已接入终端内面板：
+   - 技能：通过 `connection.api.skills.list` 拉取目录，点击把 `/name ` 写入 composer；
+   - 插件：通过 `remote.pluginInventory.list` 展示 Loader 清单；
+   - 设置：通过 `connection.api.settings.openDocument` 在系统默认应用中打开设置文档。
 3. **轨迹流**：在 `LiveProvider.onTrajectory` 中订阅 `window.__DSH_BOOT__` 暴露的 session 事件总线，
    把 `think` / `tool_call`（read/bash/skill/edit 类工具）映射为 `TrajectoryEvent`，替换 `ChatPanel` 里的静态 `INITIAL_STEPS`。
 4. **最近变更 / git tree**：接入 DSH 的 git 事件（当前会话总线没有对应事件，插件侧也未采集），

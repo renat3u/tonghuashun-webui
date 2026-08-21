@@ -4,11 +4,20 @@ import { Rail } from './components/Rail'
 import { KLineChart } from './components/KLineChart'
 import { QuotePanel } from './components/QuotePanel'
 import { StatusBar } from './components/StatusBar'
+import { TerminalPanel } from './components/TerminalPanel'
 import { useMarketEngine, useSnapshotPoller } from './lib/useMarketEngine'
 import { isLiveBridge } from './bridge'
 import { buildWorkspaceRows, type WorkspaceRow } from './lib/workspace'
 import type { Instrument } from './lib/market'
-import type { ChatOwnerProps, SessionListStateLike, SnapshotSelectorHook, WorkspaceListStateLike } from './contract'
+import type {
+  ChatOwnerProps,
+  PluginEntryLike,
+  SessionListStateLike,
+  SkillEntryLike,
+  SnapshotSelectorHook,
+  TerminalPanelKind,
+  WorkspaceListStateLike,
+} from './contract'
 
 /** 图表高度（占中栏百分比）的拖动边界与默认值。 */
 const CHART_MIN_PCT = 16
@@ -39,6 +48,12 @@ export interface AppProps {
   openPath: (path: string) => Promise<void>
   /** 对当前会话执行斜杠命令（root inject 面回调）。 */
   command: (line: string) => Promise<boolean>
+  /** 读取当前会话技能目录（真实 DSH 环境提供）。 */
+  listSkills?: () => Promise<readonly SkillEntryLike[]>
+  /** 读取 Loader 插件清单（真实 DSH 环境提供）。 */
+  listPlugins?: () => Promise<readonly PluginEntryLike[]>
+  /** 在系统默认应用中打开 DSH 设置文档（真实 DSH 环境提供）。 */
+  openSettingsDocument?: () => Promise<boolean>
   /** 渲染 ChatPanel 槽位（TerminalRoot 的 renderSlot 绑定）。 */
   renderChat: (owner: ChatOwnerProps) => ReactNode
 }
@@ -91,13 +106,14 @@ const EMPTY_INSTRUMENT: Instrument = {
   seed: 0,
 }
 
-export default function App({ useSessions, useWorkspaces, openSession, newSession, openPath, command, renderChat }: AppProps) {
+export default function App({ useSessions, useWorkspaces, openSession, newSession, openPath, command, listSkills, listPlugins, openSettingsDocument, renderChat }: AppProps) {
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [commandOpen, setCommandOpen] = useState(false)
   const [commandDraft, setCommandDraft] = useState('')
+  const [panel, setPanel] = useState<TerminalPanelKind | null>(null)
   const [favoriteCodes, setFavoriteCodes] = useState<ReadonlySet<string>>(() => {
     try {
       const raw = localStorage.getItem('ths.favorite-codes')
@@ -114,6 +130,17 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
 
   const sessionState = useSessions((s) => s)
   const currentSummary = sessionState.current !== undefined ? sessionState.byId[sessionState.current] : undefined
+  const runningSessionCount = useMemo(
+    () => sessionState.ids.reduce((n, id) => n + (sessionState.byId[id]?.running ? 1 : 0), 0),
+    [sessionState],
+  )
+  const currentSessionId = sessionState.current
+  const subagents = currentSessionId !== undefined
+    ? (sessionState.subagentsByParent?.[currentSessionId]?.entries ?? [])
+    : []
+  const jobs = currentSessionId !== undefined
+    ? (sessionState.jobsBySession?.[currentSessionId] ?? [])
+    : []
   const workspaceState = useWorkspaces((s) => s)
   const workspaceRows = useMemo(
     () => buildWorkspaceRows(workspaceState, sessionState, liveSnapshot),
@@ -232,6 +259,18 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     return () => clearTimeout(timer)
   }, [notice])
 
+  /** 从技能面板选中技能：把 /name 写入 composer 并聚焦。 */
+  const insertSkill = (name: string) => {
+    const ta = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    if (ta !== null) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(ta, `/${name} `)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+      ta.focus()
+    }
+    setPanel(null)
+  }
+
   const runCommand = async () => {
     const line = commandDraft.trim()
     if (line.length === 0) return
@@ -265,8 +304,22 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
 
   return (
     <>
-      <TopBar engine={engine} onSelect={setSelected} sessions={sessionState} workspaceRows={workspaceRows} onOpenSession={openSession} onNewSession={newSession} />
-      <div className="main">
+      <TopBar
+        engine={engine}
+        onSelect={setSelected}
+        sessions={sessionState}
+        workspaceRows={workspaceRows}
+        modelRows={liveSnapshot?.models ?? []}
+        filePaths={[
+          ...(engine.static.gitTree.get(selected) ?? []).map((t) => t.path),
+          ...engine.changes.map((c) => c.path),
+        ]}
+        onOpenSession={openSession}
+        onNewSession={newSession}
+        onOpenPath={openPath}
+        onCommand={command}
+      />
+      <div className={`main${pinned ? ' pinned' : ''}`}>
         <Rail
           engine={engine}
           selected={selected}
@@ -276,6 +329,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
           collapsed={railCollapsed}
           onToggleCollapse={() => setRailCollapsed((v) => !v)}
           onNotice={setNotice}
+          onOpenPanel={setPanel}
           favoriteCodes={favoriteCodes}
           onToggleFavorite={(code) =>
             setFavoriteCodes((prev) => {
@@ -285,12 +339,14 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
               return next
             })
           }
+          onClearFavorites={() => setFavoriteCodes(new Set())}
         />
         <section className="center" ref={centerRef}>
           {renderChat({
             selectedName: currentInstrument.name,
             sessionTitle: currentSummary?.title ?? currentSummary?.displayTitle,
             sessionCwd: currentSummary?.cwd,
+            modelOptions: (liveSnapshot?.models ?? []).map((m) => m.model),
           })}
           <div
             className="chart-resizer"
@@ -301,7 +357,11 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
             <span className="grip" />
           </div>
           {hasRealWorkspaces && liveSnapshot === null && (
-            <div className="ths-empty">真实行情等待中：工作区已接入，等待 meter 快照…</div>
+            <div className="ths-empty loading">
+              <span className="sk-line" />
+              <span className="sk-line short" />
+              <div className="loading-text">真实行情等待中：工作区已接入，等待 meter 快照…</div>
+            </div>
           )}
           <KLineChart
             code={resolvedCode}
@@ -316,6 +376,8 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
               ? workspaceRows.filter((r) => r.code !== resolvedCode).map((r) => ({ code: r.code, name: r.name }))
               : engine.static.instruments.filter((i) => i.code !== resolvedCode).map((i) => ({ code: i.code, name: i.name }))}
             overlaySeries={engine.static.daily}
+            overlayIntradaySeries={engine.static.intraday}
+            overlayFiveDaySeries={engine.static.fiveDay}
             style={{ flex: `0 0 ${chartPct.toFixed(2)}%` }}
           />
         </section>
@@ -334,6 +396,10 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
             model: currentSummary?.displayTitle,
             toolCalls: currentInstrument.commitCount,
             sessions: currentInstrument.sessions,
+            runningSessions: runningSessionCount,
+            totalSessions: sessionState.ids.length,
+            subagents,
+            jobs,
             cwd: currentSummary?.cwd ?? currentInstrument.name,
           }}
           modelDetail={liveSnapshot?.today?.byModelDetail}
@@ -344,6 +410,16 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
         <div className="demo-badge">{isLiveBridge() ? '正在连接数据…' : 'demo · mock market'}</div>
       )}
       {notice !== null && <div className="ths-toast">{notice}</div>}
+      {panel !== null && (
+        <TerminalPanel
+          kind={panel}
+          onClose={() => setPanel(null)}
+          listSkills={listSkills}
+          listPlugins={listPlugins}
+          openSettingsDocument={openSettingsDocument}
+          onInsertSkill={insertSkill}
+        />
+      )}
       {commandOpen && (
         <div className="command-overlay" onClick={() => setCommandOpen(false)}>
           <div className="command-palette" onClick={(e) => e.stopPropagation()}>

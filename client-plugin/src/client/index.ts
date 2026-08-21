@@ -12,7 +12,7 @@
  *  - send/cancel/newSession 回调在 inject 工厂里闭包 apply ctx（sessions /
  *    workspaces 服务），组件永不接触 ctx。
  */
-import type { ChatOps, ClientContext, RootOps, SessionFaceLike } from '../contract.js'
+import type { ChatOps, ClientContext, PluginEntryLike, PromptPart, RootOps, SessionFaceLike, SkillEntryLike } from '../contract.js'
 import { registerThsConversation, type ConversationRegistriesLike } from '../conversation/nodes.js'
 import { TERMINAL_CSS } from './styles.generated.js'
 import { TerminalRoot } from './TerminalRoot.js'
@@ -21,7 +21,7 @@ import { ChatPanel } from '../components/ChatPanel.js'
 const STYLE_TAG_ID = 'tonghuashun/global.css'
 
 /** Services required by the terminal plugin (runtime-provided). */
-export const inject = ['slots', 'sessions', 'workspaces', 'conversationEvents', 'conversationViews']
+export const inject = ['slots', 'sessions', 'workspaces', 'conversationEvents', 'conversationViews', 'connection', 'remote', 'remote.pluginInventory']
 
 /** 无会话时等待 startSession 落地的超时。 */
 const SESSION_WAIT_MS = 10000
@@ -63,14 +63,31 @@ function waitForSession(ctx: ClientContext): Promise<string | undefined> {
 /** ChatPanel inject 面：纯回调，会话在调用时刻解析（注入面缓存不产生陈旧会话）。 */
 function makeChatOps(ctx: ClientContext, boundSessionId: string | undefined): ChatOps {
   return {
-    async send(text, mode = 'queue') {
+    async send(text, mode = 'queue', files) {
       let face = sessionFaceOf(ctx, boundSessionId)
       if (face === undefined) {
         const id = await waitForSession(ctx)
         face = id !== undefined ? ctx.sessions.binding(id)?.session : undefined
       }
       if (face === undefined) return false
-      const result = await face.prompt([{ type: 'text', text }], mode)
+      const parts: PromptPart[] = []
+      for (const file of files ?? []) {
+        if (!file.type.startsWith('image/')) continue
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let binary = ''
+        const chunk = 0x8000
+        for (let offset = 0; offset < bytes.length; offset += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk))
+        }
+        parts.push({
+          type: 'image',
+          mediaType: file.type,
+          data: btoa(binary),
+          ...(file.name === '' ? {} : { name: file.name }),
+        })
+      }
+      parts.push({ type: 'text', text })
+      const result = await face.prompt(parts, mode)
       return result.ok
     },
     cancel() {
@@ -85,6 +102,37 @@ function makeChatOps(ctx: ClientContext, boundSessionId: string | undefined): Ch
       const result = await face.command(line)
       return result.ok
     },
+    async updateQueue(itemId, action) {
+      const face = sessionFaceOf(ctx, boundSessionId)
+      if (face?.updateQueue === undefined) return false
+      const result = await face.updateQueue(itemId, action)
+      return result.ok
+    },
+  }
+}
+
+/** DSH connection 服务的最小结构（skills / settings RPC）。 */
+interface ConnectionHandleLike {
+  api?: {
+    skills?: {
+      list(
+        req: { sessionId: string },
+        signal?: AbortSignal,
+      ): Promise<{ ok: boolean; value?: { skills: readonly SkillEntryLike[] }; error?: unknown }>
+    }
+    settings?: {
+      openDocument(
+        req: Record<string, never>,
+        signal?: AbortSignal,
+      ): Promise<{ ok: boolean; value?: { opened: boolean }; error?: unknown }>
+    }
+  }
+}
+
+/** DSH remote 服务的最小结构（pluginInventory RPC）。 */
+interface RemoteLike {
+  pluginInventory?: {
+    list(): Promise<{ ok: boolean; value?: { entries: readonly PluginEntryLike[] }; error?: unknown }>
   }
 }
 
@@ -105,6 +153,29 @@ function makeRootOps(ctx: ClientContext): RootOps {
       const face = id !== undefined ? ctx.sessions.binding(id)?.session : undefined
       if (face === undefined) return false
       const result = await face.command(line)
+      return result.ok
+    },
+    async listSkills() {
+      const sessionId = currentSessionId(ctx)
+      if (sessionId === undefined) return []
+      const connection = ctx.get?.('connection') as ConnectionHandleLike | undefined
+      const list = connection?.api?.skills?.list
+      if (list === undefined) return []
+      const result = await list({ sessionId })
+      return result.ok ? (result.value?.skills ?? []) : []
+    },
+    async listPlugins() {
+      const remote = ctx.get?.('remote') as RemoteLike | undefined
+      const list = remote?.pluginInventory?.list
+      if (list === undefined) return []
+      const result = await list()
+      return result.ok ? (result.value?.entries ?? []) : []
+    },
+    async openSettingsDocument() {
+      const connection = ctx.get?.('connection') as ConnectionHandleLike | undefined
+      const open = connection?.api?.settings?.openDocument
+      if (open === undefined) return false
+      const result = await open({}, new AbortController().signal)
       return result.ok
     },
   }

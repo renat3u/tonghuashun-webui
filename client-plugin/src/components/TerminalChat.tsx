@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './icons'
 import { AsciiWelcome } from './AsciiWelcome'
 import type { ConvMessage, Segment, TrajStep } from '../data/trajectory'
+import type { QueuedMessageLike, QueueActionLike } from '../contract'
 
-type Tab = 'conv' | 'traj' | 'cp'
+type Tab = 'conv' | 'traj' | 'cp' | 'queue'
 
 /** 检查点行结构（由会话 compaction 节点映射）。 */
 export interface CheckpointItem {
@@ -11,6 +12,8 @@ export interface CheckpointItem {
   time: number
   summary: string | null
 }
+
+const PERMISSION_PRESETS = ['workspace-write', 'danger-full-access'] as const
 
 const TAG_LABEL: Record<TrajStep['tag'], { text: string; cls: string }> = {
   think: { text: '◆ Think', cls: 'think' },
@@ -79,6 +82,8 @@ export interface TerminalChatProps {
   sessionId: string | null
   /** 最近一次模型（welcome 横幅；null = 未知）。 */
   model: string | null
+  /** 真实快照中的模型列表（模型切换弹层建议）。 */
+  modelOptions?: readonly string[]
   /** 客户端版本。 */
   version: string
   /** 真实消息流（会话节点映射）。 */
@@ -95,21 +100,25 @@ export interface TerminalChatProps {
   error: string | null
   /** 当前是否有会话（无会话时 composer 提示新建）。 */
   hasSession: boolean
-  /** 发送（Enter / 按钮）。 */
-  onSend: (text: string) => void
+  /** 发送（Enter / 按钮；可携带图片附件）。 */
+  onSend: (text: string, files?: readonly File[]) => void
   /** 停止当前回合。 */
   onCancel: () => void
   /** 新建会话。 */
   onNewSession: () => void
   /** 执行斜杠命令（模型切换等）。 */
   onCommand?: (line: string) => Promise<boolean>
+  /** pending queue 列表（真实 DSH 会话快照提供）。 */
+  queue?: readonly QueuedMessageLike[]
+  /** 对 pending queue 进行编辑/移除/steer。 */
+  onUpdateQueue?: (itemId: string, action: QueueActionLike) => Promise<boolean> | boolean
   /** 关闭错误条。 */
   onDismissError: () => void
 }
 
 /** 纯表现组件：对话 / Trajectory / 检查点三页签 + composer。数据全部来自 props。 */
 export function TerminalChat(props: TerminalChatProps) {
-  const { selectedName, directory, sessionId, model, version, messages, steps, checkpoints = [], running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onDismissError } = props
+  const { selectedName, directory, sessionId, model, modelOptions, version, messages, steps, checkpoints = [], queue = [], running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onUpdateQueue, onDismissError } = props
   const [tab, setTab] = useState<Tab>('conv')
   const [openSteps, setOpenSteps] = useState<ReadonlySet<number>>(() => new Set())
   const [draft, setDraft] = useState('')
@@ -120,6 +129,7 @@ export function TerminalChat(props: TerminalChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([])
 
   // Esc 全局关闭弹层
   useEffect(() => {
@@ -154,10 +164,12 @@ export function TerminalChat(props: TerminalChatProps) {
 
   const send = () => {
     const text = draft.trim()
-    if (!text) return
+    if (text.length === 0 && attachedFiles.length === 0) return
+    const files = attachedFiles
     setDraft('')
+    setAttachedFiles([])
     if (taRef.current) taRef.current.style.height = 'auto'
-    onSend(text)
+    onSend(text, files)
   }
 
   const submitModel = async () => {
@@ -174,10 +186,20 @@ export function TerminalChat(props: TerminalChatProps) {
     await onCommand(`/permission ${name}`)
   }
 
+  const editQueueItem = (item: QueuedMessageLike) => {
+    const text = window.prompt('编辑队列消息', item.text ?? item.preview)
+    if (text === null || onUpdateQueue === undefined) return
+    void onUpdateQueue(item.id, { kind: 'edit', content: [{ type: 'text', text }] })
+  }
+
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file === undefined) return
-    setDraft((prev) => (prev.length > 0 ? `${prev} ` : '') + `@file:${file.name}`)
+    if (file.type.startsWith('image/')) {
+      setAttachedFiles((prev) => [...prev, file])
+    } else {
+      setDraft((prev) => (prev.length > 0 ? `${prev} ` : '') + `@file:${file.name}`)
+    }
     e.target.value = ''
   }
 
@@ -201,6 +223,9 @@ export function TerminalChat(props: TerminalChatProps) {
         </button>
         <button className={`tab${tab === 'cp' ? ' active' : ''}`} onClick={() => setTab('cp')}>
           检查点 <span className="cnt">{checkpoints.length}</span>
+        </button>
+        <button className={`tab${tab === 'queue' ? ' active' : ''}`} onClick={() => setTab('queue')}>
+          队列 <span className="cnt">{queue.length}</span>
         </button>
       </div>
 
@@ -248,6 +273,17 @@ export function TerminalChat(props: TerminalChatProps) {
 
       {tab === 'cp' && (
         <div className="checkpoints">
+          <div className="cp-bar">
+            <span className="step-zh">检查点用于上下文压缩；回退功能需 DSH 提供更细粒度接口。</span>
+            <button className="cp-action ghost" onClick={() => taRef.current?.focus()}>
+              继续对话
+            </button>
+            {onCommand !== undefined && (
+              <button className="cp-action" onClick={() => void onCommand('/compact')}>
+                压缩当前会话
+              </button>
+            )}
+          </div>
           {checkpoints.length === 0 && (
             <div className="step-zh" style={{ color: 'var(--faint)' }}>
               本会话暂无压缩检查点。
@@ -257,6 +293,31 @@ export function TerminalChat(props: TerminalChatProps) {
             <div key={`${cp.seq}-${i}`} className="cp-row">
               <span className="cp-time">{new Date(cp.time).toLocaleString()}</span>
               <div className="cp-summary">{cp.summary ?? '(无摘要)'}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'queue' && (
+        <div className="checkpoints">
+          {queue.length === 0 && (
+            <div className="step-zh" style={{ color: 'var(--faint)' }}>
+              当前会话没有 pending queue。
+            </div>
+          )}
+          {queue.map((item) => (
+            <div key={item.id} className="cp-row">
+              <div className="cp-summary">{item.text ?? item.preview}</div>
+              <div className="queue-actions">
+                <span className="step-zh">状态：{item.placement}</span>
+                {onUpdateQueue !== undefined && (
+                  <>
+                    <button className="cp-action" onClick={() => void onUpdateQueue(item.id, { kind: 'steer' })}>立即执行</button>
+                    <button className="cp-action ghost" onClick={() => editQueueItem(item)}>编辑</button>
+                    <button className="cp-action danger" onClick={() => void onUpdateQueue(item.id, { kind: 'remove' })}>移除</button>
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -303,8 +364,24 @@ export function TerminalChat(props: TerminalChatProps) {
             }}
             onKeyDown={onKeyDown}
           />
+          {attachedFiles.length > 0 && (
+            <div className="attachments">
+              {attachedFiles.map((f, i) => (
+                <span key={`${f.name}-${i}`} className="att">
+                  <span className="att-name">{f.name}</span>
+                  <button
+                    className="att-del"
+                    title="移除附件"
+                    onClick={() => setAttachedFiles((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="row">
-            <button className="plus" title="附加文件（当前以 @file: 标记插入）" onClick={() => fileRef.current?.click()}>
+            <button className="plus" title="添加图片附件或 @file 标记" onClick={() => fileRef.current?.click()}>
               <Icon name="plus" size={11} />
             </button>
             <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={onPickFile} />
@@ -336,6 +413,20 @@ export function TerminalChat(props: TerminalChatProps) {
                       }
                     }}
                   />
+                  <div className="model-list">
+                    {PERMISSION_PRESETS.map((name) => (
+                      <button
+                        key={name}
+                        className={name === permDraft ? 'sel' : undefined}
+                        onClick={() => {
+                          setPermDraft(name)
+                          void submitPermission()
+                        }}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
                   <button onClick={() => void submitPermission()}>切换</button>
                 </div>
               )}
@@ -365,6 +456,22 @@ export function TerminalChat(props: TerminalChatProps) {
                         }
                       }}
                     />
+                    {modelOptions !== undefined && modelOptions.length > 0 && (
+                      <div className="model-list">
+                        {modelOptions.map((name) => (
+                          <button
+                            key={name}
+                            className={name === modelDraft ? 'sel' : undefined}
+                            onClick={() => {
+                              setModelDraft(name)
+                              void submitModel()
+                            }}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <button onClick={() => void submitModel()}>切换</button>
                   </div>
                 )}
@@ -375,7 +482,7 @@ export function TerminalChat(props: TerminalChatProps) {
                 <span className="stop-icon" />
               </button>
             ) : (
-              <button className="send" title="发送" disabled={!draft.trim()} onClick={send}>
+              <button className="send" title="发送" disabled={!draft.trim() && attachedFiles.length === 0} onClick={send}>
                 <Icon name="send" size={12} filled />
               </button>
             )}

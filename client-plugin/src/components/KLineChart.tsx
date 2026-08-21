@@ -38,6 +38,10 @@ interface Props {
   overlayOptions?: { code: string; name: string }[]
   /** 各标的日K数据，供叠加使用。 */
   overlaySeries?: ReadonlyMap<string, Candle[]>
+  /** 各标的分时数据，供分时叠加使用。 */
+  overlayIntradaySeries?: ReadonlyMap<string, IntradayPoint[]>
+  /** 各标的5日数据，供5日叠加使用。 */
+  overlayFiveDaySeries?: ReadonlyMap<string, IntradayPoint[]>
   /** 根容器样式（图表高度由中栏分隔条控制） */
   style?: CSSProperties
 }
@@ -74,12 +78,14 @@ function visibleWindow(length: number, zoom: number, pan: number): { start: numb
   return { start, count }
 }
 
-/** 画线工具的一条线，坐标为绘图区归一化值（0..1）。 */
+/** 画线工具的一条线/标注，坐标为绘图区归一化值（0..1）。 */
 interface DrawLine {
   x1: number
   y1: number
   x2: number
   y2: number
+  /** 标注文本；存在时该条绘制为文字标注而不是线段。 */
+  label?: string
 }
 
 function emaSeries(values: readonly number[], period: number): number[] {
@@ -144,6 +150,13 @@ function drawAnnotations(
   ctx.lineWidth = 1.2
   ctx.setLineDash([5, 4])
   for (const line of lines) {
+    if (line.label !== undefined) {
+      ctx.setLineDash([])
+      ctx.fillStyle = 'rgba(120,180,255,.9)'
+      ctx.font = '11px "PingFang SC", "Noto Sans SC", sans-serif'
+      ctx.fillText(line.label, toX(line.x1) + 4, toY(line.y1) - 4)
+      continue
+    }
     ctx.beginPath()
     ctx.moveTo(toX(line.x1), toY(line.y1))
     ctx.lineTo(toX(line.x2), toY(line.y2))
@@ -196,7 +209,39 @@ function drawOverlayLine(
   void opts.padR
 }
 
-export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, overlayOptions, overlaySeries, style }: Props) {
+/** 绘制分时/5日叠加标的价格线（独立缩放到主图区域）。 */
+function drawOverlayLineSeries(
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    W: number; padL: number; padR: number; padT: number; mainH: number; plotW: number
+    points: readonly IntradayPoint[]
+  },
+): void {
+  const { padL, padT, mainH, plotW, points } = opts
+  if (points.length === 0) return
+  const lo = Math.min(...points.map((p) => p.p))
+  const hi = Math.max(...points.map((p) => p.p))
+  const span = hi - lo || 1
+  const X = (i: number) => padL + (i / Math.max(1, points.length - 1)) * plotW
+  const Y = (p: number) => padT + ((hi - p) / span) * mainH
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255,190,80,.85)'
+  ctx.lineWidth = 1.3
+  ctx.setLineDash([6, 4])
+  ctx.beginPath()
+  points.forEach((p, i) => {
+    const x = X(i)
+    const y = Y(p.p)
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+  ctx.restore()
+  void opts.W
+  void opts.padR
+}
+
+export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, overlayOptions, overlaySeries, overlayIntradaySeries, overlayFiveDaySeries, style }: Props) {
   const [mode, setMode] = useState<ChartMode>('daily')
   const [info, setInfo] = useState<Info | null>(null)
   const [pulse, setPulse] = useState(false)
@@ -205,7 +250,11 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const [toolNotice, setToolNotice] = useState<string | null>(null)
   const [indicator, setIndicator] = useState<'none' | 'macd' | 'kdj' | 'boll'>('none')
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [maPeriods, setMaPeriods] = useState({ short: 5, mid: 10, long: 20 })
   const [drawMode, setDrawMode] = useState(false)
+  const [drawTool, setDrawTool] = useState<'trend' | 'h' | 'v' | 'label'>('trend')
+  const [drawMenuOpen, setDrawMenuOpen] = useState(false)
   const [tempPoint, setTempPoint] = useState<{ x: number; y: number } | null>(null)
   const [overlayCode, setOverlayCode] = useState<string | null>(null)
   const [overlayMenuOpen, setOverlayMenuOpen] = useState(false)
@@ -225,6 +274,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const panRef = useRef<{ x: number; pan: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hoverRef = useRef(-1)
+  const [pinnedHover, setPinnedHover] = useState(false)
   const setInfoRef = useRef(setInfo)
   setInfoRef.current = setInfo
 
@@ -245,6 +295,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       if (detail === undefined) return
       setMode(detail)
       hoverRef.current = -1
+      setPinnedHover(false)
       setZoom(1)
       setPan(0)
     }
@@ -341,6 +392,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       drawCandleView(ctx, {
         W, H, padL, padR, padT, padB, mainH, volTop, volH, plotW,
         candles: visibleSeries.candles, crash, pulse, hover, prevToken,
+        maPeriods,
       })
     } else {
       drawLineView(ctx, {
@@ -351,7 +403,16 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       })
     }
 
-    if (overlayDaily !== undefined && overlayDaily.length > 0) {
+    const overlayLinePoints = mode === 'intraday' && overlayCode !== null
+      ? overlayIntradaySeries?.get(overlayCode)
+      : mode === 'fiveday' && overlayCode !== null
+        ? overlayFiveDaySeries?.get(overlayCode)
+        : undefined
+    if (overlayLinePoints !== undefined && overlayLinePoints.length > 0) {
+      drawOverlayLineSeries(ctx, { W, padL, padR, padT, mainH, plotW, points: overlayLinePoints })
+    }
+
+    if (visibleSeries.kind === 'candle' && overlayDaily !== undefined && overlayDaily.length > 0) {
       drawOverlayLine(ctx, { W, padL, padR, padT, mainH, plotW, candles: overlayDaily })
     }
 
@@ -392,6 +453,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   }, [])
 
   const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (pinnedHover) return
     const canvas = canvasRef.current
     if (!canvas) return
     const r = canvas.getBoundingClientRect()
@@ -414,6 +476,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   }
 
   const onMouseLeave = () => {
+    if (pinnedHover) return
     hoverRef.current = -1
     paint()
   }
@@ -460,16 +523,34 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     setZoom(1)
     setPan(0)
     hoverRef.current = -1
+    setPinnedHover(false)
     paint()
   }
 
   const onCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!drawMode) return
     const canvas = canvasRef.current
     if (!canvas) return
     const r = canvas.getBoundingClientRect()
     const padL = 52
     const padR = 12
+
+    // 非画线模式：点击固定十字光标。
+    if (!drawMode) {
+      const len = series.kind === 'candle' ? series.candles.length : series.points.length
+      const win = visibleWindow(len, zoom, pan)
+      const n = win.count
+      if (n <= 0) return
+      const slot = (r.width - padL - padR) / n
+      const i = Math.floor((e.clientX - r.left - padL) / slot)
+      const nh = i >= 0 && i < n ? i : -1
+      if (nh >= 0) {
+        hoverRef.current = nh
+        setPinnedHover(true)
+        paint()
+      }
+      return
+    }
+
     const padT = 20
     const padB = 15
     const mainH = (r.height - padT - padB) * 0.64
@@ -477,6 +558,23 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     if (plotW <= 0 || mainH <= 0) return
     const nx = Math.max(0, Math.min(1, (e.clientX - r.left - padL) / plotW))
     const ny = Math.max(0, Math.min(1, (e.clientY - r.top - padT) / mainH))
+    if (drawTool === 'h') {
+      setDrawLines((prev) => [...prev, { x1: 0, y1: ny, x2: 1, y2: ny }])
+      setToolNotice('已画水平线')
+      return
+    }
+    if (drawTool === 'v') {
+      setDrawLines((prev) => [...prev, { x1: nx, y1: 0, x2: nx, y2: 1 }])
+      setToolNotice('已画垂直线')
+      return
+    }
+    if (drawTool === 'label') {
+      const text = window.prompt('标注内容', '标注')
+      if (text !== null && text.trim() !== '') {
+        setDrawLines((prev) => [...prev, { x1: nx, y1: ny, x2: nx, y2: ny, label: text.trim() }])
+      }
+      return
+    }
     if (tempPoint === null) {
       setTempPoint({ x: nx, y: ny })
     } else {
@@ -502,20 +600,54 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     <div className="chart-wrap" style={style}>
       <div className="chart-tabs">
         {MODES.map((m) => (
-          <button key={m.key} className={`ct${mode === m.key ? ' active' : ''}`} onClick={() => { setMode(m.key); hoverRef.current = -1 }}>
+          <button key={m.key} className={`ct${mode === m.key ? ' active' : ''}`} onClick={() => { setMode(m.key); hoverRef.current = -1; setPinnedHover(false) }}>
             {m.label}
           </button>
         ))}
-        <button className="ct" onClick={() => setToolNotice('更多菜单：即将支持（指标/坐标/参数设置）')}>
-          更多
-          <Icon name="chevronDown" size={8} />
-        </button>
-        <span className="grow" />
-        <div className="chart-tools">
-          <button title="前复权（LOC 口径）" onClick={() => setToolNotice('前复权：即将支持')}>
-            前复权
+        <div className="indicator-select">
+          <button className="ct" onClick={() => setMoreOpen((o) => !o)}>
+            更多
             <Icon name="chevronDown" size={8} />
           </button>
+          {moreOpen && (
+            <div className="indicator-menu ma-menu">
+              <div className="ma-menu-title">MA 参数</div>
+              <label className="ma-field">
+                短均线
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={maPeriods.short}
+                  onChange={(e) => setMaPeriods((p) => ({ ...p, short: Number(e.target.value) || 1 }))}
+                />
+              </label>
+              <label className="ma-field">
+                中均线
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={maPeriods.mid}
+                  onChange={(e) => setMaPeriods((p) => ({ ...p, mid: Number(e.target.value) || 1 }))}
+                />
+              </label>
+              <label className="ma-field">
+                长均线
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={maPeriods.long}
+                  onChange={(e) => setMaPeriods((p) => ({ ...p, long: Number(e.target.value) || 1 }))}
+                />
+              </label>
+              <button onClick={() => setMoreOpen(false)}>完成</button>
+            </div>
+          )}
+        </div>
+        <span className="grow" />
+        <div className="chart-tools">
           <div className="indicator-select">
             <button title="叠加标的" onClick={() => setOverlayMenuOpen((o) => !o)}>
               叠加{overlayCode !== null ? ' · 开' : ''}
@@ -541,16 +673,34 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
               </div>
             )}
           </div>
-          <button
-            title="画线工具"
-            className={drawMode ? 'tool-active' : undefined}
-            onClick={() => {
-              setDrawMode((v) => !v)
-              setToolNotice(drawMode ? '画线已关闭' : '画线模式：点击两个点画线')
-            }}
-          >
-            画线
-          </button>
+          <div className="indicator-select">
+            <button
+              title="画线工具"
+              className={drawMode ? 'tool-active' : undefined}
+              onClick={() => {
+                setDrawMode((v) => !v)
+                setDrawMenuOpen(false)
+                setToolNotice(drawMode ? '画线已关闭' : `画线模式：${drawTool === 'trend' ? '点击两个点画趋势线' : drawTool === 'h' ? '点击画水平线' : drawTool === 'v' ? '点击画垂直线' : '点击添加标注'}`)
+              }}
+            >
+              画线{drawMode ? ` · ${drawTool === 'trend' ? '趋势' : drawTool === 'h' ? '水平' : drawTool === 'v' ? '垂直' : '标注'}` : ''}
+            </button>
+            <button
+              title="画线类型"
+              onClick={() => setDrawMenuOpen((o) => !o)}
+            >
+              <Icon name="chevronDown" size={8} />
+            </button>
+            {drawMode && drawMenuOpen && (
+              <div className="indicator-menu draw-menu">
+                <button onClick={() => { setDrawTool('trend'); setDrawMenuOpen(false); setToolNotice('趋势线：点击两个点') }}>趋势线</button>
+                <button onClick={() => { setDrawTool('h'); setDrawMenuOpen(false); setToolNotice('水平线：点击画线') }}>水平线</button>
+                <button onClick={() => { setDrawTool('v'); setDrawMenuOpen(false); setToolNotice('垂直线：点击画线') }}>垂直线</button>
+                <button onClick={() => { setDrawTool('label'); setDrawMenuOpen(false); setToolNotice('标注：点击添加文字') }}>标注</button>
+                <button onClick={() => { setDrawLines([]); setDrawMenuOpen(false); setToolNotice('已清除画线') }}>清除画线</button>
+              </div>
+            )}
+          </div>
           <div className="indicator-select">
             <button title="技术指标" onClick={() => setIndicatorMenuOpen((o) => !o)}>
               指标{indicator !== 'none' ? ` · ${indicator.toUpperCase()}` : ''}
@@ -648,10 +798,11 @@ interface CandleViewOpts {
   pulse: boolean
   hover: number
   prevToken: number
+  maPeriods: { short: number; mid: number; long: number }
 }
 
 function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
-  const { W, padL, padR, padT, mainH, volTop, volH, plotW, candles, crash, pulse, hover, prevToken } = o
+  const { W, padL, padR, padT, mainH, volTop, volH, plotW, candles, crash, pulse, hover, prevToken, maPeriods } = o
   const n = candles.length
   if (n === 0) return
   const slot = plotW / n
@@ -785,18 +936,21 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
     ctx.stroke()
     ctx.lineWidth = 1
   }
-  drawMA(ma(closes, 5), MA5_C)
-  drawMA(ma(closes, 10), MA10_C)
-  drawMA(ma(closes, 20), MA20_C)
+  const pShort = Math.max(1, Math.round(maPeriods.short))
+  const pMid = Math.max(1, Math.round(maPeriods.mid))
+  const pLong = Math.max(1, Math.round(maPeriods.long))
+  drawMA(ma(closes, pShort), MA5_C)
+  drawMA(ma(closes, pMid), MA10_C)
+  drawMA(ma(closes, pLong), MA20_C)
 
   // 主图图例
   ctx.textAlign = 'left'
   let lx = padL + 2
   const lastClose = closes[closes.length - 1]
   const legend: [string, string][] = [
-    [`MA5: ${fmtToken(Math.round(ma(closes, 5)[n - 1] ?? lastClose))}`, MA5_C],
-    [`MA10: ${fmtToken(Math.round(ma(closes, 10)[n - 1] ?? lastClose))}`, MA10_C],
-    [`MA20: ${fmtToken(Math.round(ma(closes, 20)[n - 1] ?? lastClose))}`, MA20_C],
+    [`MA${pShort}: ${fmtToken(Math.round(ma(closes, pShort)[n - 1] ?? lastClose))}`, MA5_C],
+    [`MA${pMid}: ${fmtToken(Math.round(ma(closes, pMid)[n - 1] ?? lastClose))}`, MA10_C],
+    [`MA${pLong}: ${fmtToken(Math.round(ma(closes, pLong)[n - 1] ?? lastClose))}`, MA20_C],
   ]
   for (const [t, c] of legend) {
     ctx.fillStyle = c
@@ -842,23 +996,23 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
     }
     ctx.stroke()
   }
-  drawVMA(ma(locs, 5), MA5_C)
-  drawVMA(ma(locs, 10), MA10_C)
+  drawVMA(ma(locs, pShort), MA5_C)
+  drawVMA(ma(locs, pMid), MA10_C)
 
   // 子图图例
   ctx.fillStyle = AXIS
-  ctx.fillText('变更量(5,10)', padL + 2, volTop + 9)
+  ctx.fillText(`变更量(${pShort},${pMid})`, padL + 2, volTop + 9)
   const lastLoc = candles[n - 1].loc
   const lastLocLabel = `${lastLoc >= 0 ? '+' : ''}${fmt(lastLoc)}行`
-  let vx = padL + 2 + ctx.measureText('变更量(5,10)').width + 10
+  let vx = padL + 2 + ctx.measureText(`变更量(${pShort},${pMid})`).width + 10
   ctx.fillStyle = '#d7dde9'
   ctx.fillText(`变更: ${lastLocLabel}`, vx, volTop + 9)
   vx += ctx.measureText(`变更: ${lastLocLabel}`).width + 10
   ctx.fillStyle = MA5_C
-  ctx.fillText(`MA5: ${fmt(Math.round(ma(locs, 5)[n - 1] ?? 0))}`, vx, volTop + 9)
-  vx += ctx.measureText(`MA5: ${fmt(Math.round(ma(locs, 5)[n - 1] ?? 0))}`).width + 10
+  ctx.fillText(`MA${pShort}: ${fmt(Math.round(ma(locs, pShort)[n - 1] ?? 0))}`, vx, volTop + 9)
+  vx += ctx.measureText(`MA${pShort}: ${fmt(Math.round(ma(locs, pShort)[n - 1] ?? 0))}`).width + 10
   ctx.fillStyle = MA10_C
-  ctx.fillText(`MA10: ${fmt(Math.round(ma(locs, 10)[n - 1] ?? 0))}`, vx, volTop + 9)
+  ctx.fillText(`MA${pMid}: ${fmt(Math.round(ma(locs, pMid)[n - 1] ?? 0))}`, vx, volTop + 9)
 
   // 重构日标注（DSH001）
   if (crash) {

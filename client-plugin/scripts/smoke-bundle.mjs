@@ -50,7 +50,7 @@ const requireStub = (specifier) => {
 }
 
 const plugin = loaded.factory(requireStub)
-if (plugin.inject.join(',') !== 'slots,sessions,workspaces,conversationEvents,conversationViews') {
+if (plugin.inject.join(',') !== 'slots,sessions,workspaces,conversationEvents,conversationViews,connection,remote,remote.pluginInventory') {
   throw new Error(`unexpected inject: ${JSON.stringify(plugin.inject)}`)
 }
 

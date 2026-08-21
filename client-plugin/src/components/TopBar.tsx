@@ -12,19 +12,27 @@ interface Props {
   sessions: SessionListStateLike
   /** 真实工作区行，用于全局搜索。 */
   workspaceRows?: WorkspaceRow[]
+  /** 真实快照中的模型列表。 */
+  modelRows?: readonly { model: string; tokens: number }[]
+  /** 当前工作区可搜索的文件路径。 */
+  filePaths?: readonly string[]
   /** 打开指定会话。 */
   onOpenSession: (id: string) => void
   /** 新建会话。 */
   onNewSession: () => void
+  /** 用系统默认应用打开路径。 */
+  onOpenPath?: (path: string) => Promise<void> | void
+  /** 执行命令（模型跳转等）。 */
+  onCommand?: (line: string) => Promise<boolean> | boolean
 }
-
-const ICON_ACTIONS = ['monitor', 'clock', 'user'] as const
 
 type SearchHit =
   | { kind: 'workspace'; code: string; name: string; sub: string; last: number; pct: number }
   | { kind: 'session'; id: string; title: string; sub: string }
+  | { kind: 'model'; name: string; sub: string; tokens: number }
+  | { kind: 'file'; path: string; sub: string }
 
-export function TopBar({ engine, onSelect, sessions, workspaceRows, onOpenSession, onNewSession }: Props) {
+export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, filePaths, onOpenSession, onNewSession, onOpenPath, onCommand }: Props) {
   const [q, setQ] = useState('')
   const [focused, setFocused] = useState(false)
   const [selIdx, setSelIdx] = useState(0)
@@ -70,15 +78,27 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, onOpenSessio
         hits.push({ kind: 'session', id: row.id, title: row.displayTitle, sub: row.cwd ?? row.id })
       }
     }
+    for (const row of modelRows ?? []) {
+      if (row.model.toLowerCase().includes(kw)) {
+        hits.push({ kind: 'model', name: row.model, sub: '模型', tokens: row.tokens })
+      }
+    }
+    for (const path of filePaths ?? []) {
+      if (path.toLowerCase().includes(kw)) {
+        hits.push({ kind: 'file', path, sub: '文件' })
+      }
+    }
     return hits.slice(0, 8)
-  }, [q, engine.static, engine.quotes, workspaceRows, sessionRows])
+  }, [q, engine.static, engine.quotes, workspaceRows, sessionRows, modelRows, filePaths])
 
   const currentRow = sessions.current !== undefined ? sessions.byId[sessions.current] : undefined
   const currentLabel = currentRow?.displayTitle ?? '选择会话'
 
   const pick = (hit: SearchHit) => {
     if (hit.kind === 'workspace') onSelect(hit.code)
-    else onOpenSession(hit.id)
+    else if (hit.kind === 'session') onOpenSession(hit.id)
+    else if (hit.kind === 'model') void onCommand?.(`/model ${hit.name}`)
+    else if (hit.kind === 'file') void onOpenPath?.(hit.path)
     setQ('')
     setFocused(false)
   }
@@ -145,17 +165,20 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, onOpenSessio
             )}
             {matches.map((hit, i) => {
               const cls = hit.kind === 'workspace' ? dirClass(hit.pct) : ''
+              const key = hit.kind === 'workspace' ? hit.code : hit.kind === 'session' ? hit.id : hit.kind === 'model' ? hit.name : hit.path
+              const name = hit.kind === 'workspace' ? hit.name : hit.kind === 'session' ? hit.title : hit.kind === 'model' ? hit.name : hit.path
+              const cd = hit.kind === 'workspace' ? hit.code : hit.kind === 'session' ? '会话' : hit.kind === 'model' ? '模型' : '文件'
               return (
                 <div
-                  key={hit.kind === 'workspace' ? hit.code : hit.id}
+                  key={key}
                   className={`row${i === selIdx ? ' sel' : ''}`}
                   onMouseDown={(e) => {
                     e.preventDefault()
                     pick(hit)
                   }}
                 >
-                  <span className="nm">{hit.kind === 'workspace' ? hit.name : hit.title}</span>
-                  <span className="cd">{hit.kind === 'workspace' ? hit.code : '会话'}</span>
+                  <span className="nm">{name}</span>
+                  <span className="cd">{cd}</span>
                   <span className="sub">{hit.sub}</span>
                   {hit.kind === 'workspace' && (
                     <span className={`pr num ${cls}`}>
@@ -203,13 +226,6 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, onOpenSessio
             ))}
           </div>
         )}
-      </div>
-      <div className="top-actions">
-        {ICON_ACTIONS.map((name) => (
-          <button key={name} title={name} aria-label={name}>
-            <Icon name={name} size={15} />
-          </button>
-        ))}
       </div>
     </header>
   )

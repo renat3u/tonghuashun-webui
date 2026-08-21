@@ -18,12 +18,13 @@ const VERSION = '0.1.0'
  * 组件自身不建任何订阅机制。
  */
 export function ChatPanel(props: ChatPanelProps) {
-  const { useSession, sessionId, send, cancel, newSession, command, selectedName, sessionTitle, sessionCwd } = props
+  const { useSession, sessionId, send, cancel, newSession, command, updateQueue, selectedName, sessionTitle, sessionCwd, modelOptions } = props
   const snapshot = useSession((s) => s)
   const [localError, setLocalError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
 
   const messages = useMemo(() => nodesToMessages(snapshot?.nodes ?? []), [snapshot])
+  const queue = useMemo(() => snapshot?.queue ?? [], [snapshot])
   const steps = useMemo(() => {
     if (!snapshot) return []
     const base = nodesToSteps(snapshot.nodes)
@@ -40,11 +41,11 @@ export function ChatPanel(props: ChatPanelProps) {
     ? `${promptError.op === 'send' ? '发送失败' : '停止失败'}：${promptError.error.message}`
     : localError
 
-  const onSend = (text: string) => {
+  const onSend = (text: string, files?: readonly File[]) => {
     if (sending) return
     setSending(true)
     setLocalError(null)
-    void send(text).then(
+    void send(text, 'queue', files).then(
       (ok) => {
         setSending(false)
         if (!ok) {
@@ -66,6 +67,7 @@ export function ChatPanel(props: ChatPanelProps) {
       directory={directory}
       sessionId={sessionId ?? null}
       model={snapshot ? lastModelOf(snapshot) : null}
+      modelOptions={modelOptions}
       version={VERSION}
       messages={messages}
       steps={steps}
@@ -78,6 +80,8 @@ export function ChatPanel(props: ChatPanelProps) {
       onCancel={cancel}
       onNewSession={newSession}
       onCommand={command}
+      onUpdateQueue={updateQueue}
+      queue={queue}
       onDismissError={() => setLocalError(null)}
     />
   )

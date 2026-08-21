@@ -23,6 +23,32 @@ export interface PromptTextPart {
   text: string
 }
 
+/** 图片 prompt 内容块（dsh PromptContentPart 的 image 子集）。 */
+export interface PromptImagePart {
+  type: 'image'
+  mediaType: string
+  data: string
+  name?: string
+}
+
+/** prompt 内容块联合。 */
+export type PromptPart = PromptTextPart | PromptImagePart
+
+/** 会话队列中的一条待处理消息（dsh QueuedMessage 的结构子集）。 */
+export interface QueuedMessageLike {
+  id: string
+  messageId: string
+  placement: 'queued' | 'steering' | 'context'
+  preview: string
+  text: string | null
+}
+
+/** 队列操作（dsh QueueAction 的结构子集）。 */
+export type QueueActionLike =
+  | { kind: 'edit'; content: readonly PromptPart[] }
+  | { kind: 'remove' }
+  | { kind: 'steer' }
+
 /** RPC 结果面（dsh RpcResult 的结构子集：业务失败时 ok=false）。 */
 export interface RpcResultLike {
   ok: boolean
@@ -177,14 +203,17 @@ export interface ConversationSnapshotLike {
   promptError: { op: string; error: { code: string; message: string } } | null
   removed: boolean
   blank: boolean
+  /** 会话 pending queue（真实 DSH 运行时提供）。 */
+  queue?: readonly QueuedMessageLike[]
 }
 
 /** 会话行为面（dsh SessionFace 的结构子集）。 */
 export interface SessionFaceLike {
   sessionId: string
-  prompt(content: readonly PromptTextPart[], mode: 'queue' | 'steer'): Promise<RpcResultLike>
+  prompt(content: readonly PromptPart[], mode: 'queue' | 'steer'): Promise<RpcResultLike>
   cancel(): Promise<RpcResultLike>
   command(line: string): Promise<RpcResultLike>
+  updateQueue?(itemId: string, action: QueueActionLike): Promise<RpcResultLike>
   getSnapshot(): ConversationSnapshotLike
   subscribe(fn: () => void): () => void
 }
@@ -212,6 +241,28 @@ export interface SessionListStateLike {
   byId: Record<string, SessionSummaryLike>
   current: string | undefined
   phase: string
+  /** 直接子代理目录（可选：真实 DSH 运行时提供）。 */
+  subagentsByParent?: Readonly<Record<string, {
+    entries: readonly {
+      kind: 'child' | 'diagnostic'
+      id: string
+      activity?: 'running' | 'inactive'
+      hasChildren?: boolean
+      mode?: 'one-shot' | 'continuable'
+      label?: string
+    }[]
+    parentAvailable: boolean
+  }>>
+  /** 每会话后台任务（可选：真实 DSH 运行时提供）。 */
+  jobsBySession?: Readonly<Record<string, readonly {
+    id: string
+    kind: string
+    label: string
+    status: string
+    detail?: string
+    startedAt: number
+    finishedAt?: number
+  }[]>>
 }
 
 /** 最小可观察快照源。 */
@@ -264,15 +315,37 @@ export interface ChatOps {
    * 发送一条消息；无当前会话时先走新建会话流程。
    * @param text - 消息文本。
    * @param mode - queue 追加回合（默认）；steer 打断运行中回合。
+   * @param files - 可选的图片附件（真实 DSH 会随 prompt 上传）。
    * @returns 是否被接受（业务/传输失败为 false，同时落在 snapshot.promptError）。
    */
-  send(text: string, mode?: 'queue' | 'steer'): Promise<boolean>
+  send(text: string, mode?: 'queue' | 'steer', files?: readonly File[]): Promise<boolean>
   /** 取消当前运行中的回合。 */
   cancel(): void
   /** 新建会话（走 workspaces.startSession）。 */
   newSession(): void
   /** 执行一条斜杠命令（如 /model deepseek-v4）。 */
   command(line: string): Promise<boolean>
+  /** 对 pending queue 做编辑/移除/steer。 */
+  updateQueue?(itemId: string, action: QueueActionLike): Promise<boolean>
+}
+
+/** 左侧导航可打开的终端内面板。 */
+export type TerminalPanelKind = 'skills' | 'plugins' | 'settings'
+
+/** DSH skill.list 的行结构子集。 */
+export interface SkillEntryLike {
+  name: string
+  description: string
+  whenToUse?: string
+  modelInvocable: boolean
+}
+
+/** DSH pluginInventory 的行结构子集。 */
+export interface PluginEntryLike {
+  entryId: string
+  moduleName: string
+  enabled: boolean
+  fiberPhase?: string | null
 }
 
 /** root 注册项的 inject 面。 */
@@ -285,6 +358,12 @@ export interface RootOps {
   openPath(path: string): Promise<void>
   /** 对当前会话执行一条斜杠命令。 */
   command(line: string): Promise<boolean>
+  /** 读取当前会话可用的技能目录（非 DSH 环境可缺省）。 */
+  listSkills?(): Promise<readonly SkillEntryLike[]>
+  /** 读取当前 Loader 插件清单（非 DSH 环境可缺省）。 */
+  listPlugins?(): Promise<readonly PluginEntryLike[]>
+  /** 用系统默认应用打开 DSH 设置文档（非 DSH 环境可缺省）。 */
+  openSettingsDocument?(): Promise<boolean>
 }
 
 /** ChatPanel 槽的 owner 面（TerminalRoot 经 renderSlot 下传）。 */
@@ -292,6 +371,8 @@ export interface ChatOwnerProps {
   selectedName: string
   sessionTitle?: string
   sessionCwd?: string
+  /** 真实快照中的模型列表，供模型切换弹层展示。 */
+  modelOptions?: readonly string[]
 }
 
 /** ChatPanel 收到的会话标准 seat（session-maybe 作用域的结构镜像）。 */
@@ -352,4 +433,6 @@ export interface ClientContext {
   conversationViews: ConversationViewsLike
   /** cordis 效果：返回释放器；fiber 销毁时执行。 */
   effect(effect: () => () => void, label?: string): void
+  /** cordis 服务查找：读取已注入的 connection / remote 等服务。 */
+  get?<T>(key: string): T | undefined
 }

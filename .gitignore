@@ -5,3 +5,5 @@ dist/
 !.test-dist/package.json
 .DS_Store
 *.log
+
+plan/

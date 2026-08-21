@@ -22,6 +22,25 @@ interface Props {
     model?: string
     toolCalls: number
     sessions: number
+    runningSessions?: number
+    totalSessions?: number
+    subagents?: readonly {
+      kind: 'child' | 'diagnostic'
+      id: string
+      activity?: 'running' | 'inactive'
+      hasChildren?: boolean
+      mode?: 'one-shot' | 'continuable'
+      label?: string
+    }[]
+    jobs?: readonly {
+      id: string
+      kind: string
+      label: string
+      status: string
+      detail?: string
+      startedAt: number
+      finishedAt?: number
+    }[]
     cwd?: string
   }
   /** 今日按模型拆分的 token 明细。 */
@@ -33,6 +52,7 @@ type PanelTab = 'changes' | 'tree' | 'flow' | 'depth'
 export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, openPath, depth, modelDetail }: Props) {
   const [tab, setTab] = useState<PanelTab>('changes')
   const [hideTape, setHideTape] = useState(false)
+  const [detail, setDetail] = useState<{ title: string; lines: ReadonlyArray<readonly [string, string]>; path?: string } | null>(null)
   const q = engine.quotes.get(instrument.code)
   const last = q?.last ?? instrument.last
   const pct = q?.pct ?? instrument.pct
@@ -149,8 +169,44 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
             <span className="k">关联会话</span>
             <span className="v">{fmt(depth?.sessions ?? 0)}</span>
           </div>
+          <div className="depth-row">
+            <span className="k">运行中会话</span>
+            <span className="v">{fmt(depth?.runningSessions ?? 0)}</span>
+          </div>
+          <div className="depth-row">
+            <span className="k">会话总数</span>
+            <span className="v">{fmt(depth?.totalSessions ?? 0)}</span>
+          </div>
+          <div className="depth-row">
+            <span className="k">子代理</span>
+            <span className="v">{fmt(depth?.subagents?.length ?? 0)}</span>
+          </div>
+          <div className="depth-row">
+            <span className="k">后台任务</span>
+            <span className="v">{fmt(depth?.jobs?.length ?? 0)}</span>
+          </div>
+          {(depth?.subagents?.length ?? 0) > 0 && (
+            <div className="depth-list">
+              {depth?.subagents?.map((s) => (
+                <div key={s.id} className="depth-item">
+                  <span className="nm">{s.mode === 'continuable' ? s.label ?? s.id : s.kind === 'diagnostic' ? '诊断' : s.id}</span>
+                  <span className="st">{s.activity ?? ''}{s.hasChildren ? ' · 有子级' : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {(depth?.jobs?.length ?? 0) > 0 && (
+            <div className="depth-list">
+              {depth?.jobs?.map((j) => (
+                <div key={j.id} className="depth-item">
+                  <span className="nm">{j.label}</span>
+                  <span className="st">{j.status}{j.detail ? ` · ${j.detail}` : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="step-zh" style={{ padding: '4px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
-            盘口为 Harness 会话状态占位：后续可扩展队列/子代理/jobs。
+            子代理与后台任务来自 DSH 实时会话列表；队列操作入口待后续接入。
           </div>
         </div>
       )}
@@ -175,6 +231,26 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
               <span className="delta">
                 <span className="add">+{fmt(c.add)}</span>{' '}
                 <span className="del">-{fmt(c.del)}</span>
+                <button
+                  className="detail-btn"
+                  title="查看详情"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setDetail({
+                      title: '变更详情',
+                      path: c.path,
+                      lines: [
+                        ['时间', c.time],
+                        ['路径', c.path],
+                        ['说明', c.msg],
+                        ['新增', `+${fmt(c.add)} 行`],
+                        ['删除', `-${fmt(c.del)} 行`],
+                      ],
+                    })
+                  }}
+                >
+                  ℹ
+                </button>
               </span>
             </div>
           ))}
@@ -207,6 +283,25 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
                     <span className="del">-{fmt(t.del)}</span>
                   </>
                 )}
+                <button
+                  className="detail-btn"
+                  title="查看详情"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setDetail({
+                      title: '提交详情',
+                      path: t.path,
+                      lines: [
+                        ['路径', t.path],
+                        ['层级', String(t.depth)],
+                        ['新增', t.add > 0 ? `+${fmt(t.add)} 行` : '—'],
+                        ['删除', t.del > 0 ? `-${fmt(t.del)} 行` : '—'],
+                      ],
+                    })
+                  }}
+                >
+                  ℹ
+                </button>
               </span>
             </div>
           ))}
@@ -277,6 +372,45 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
               <span className={`bs ${t.delta >= 0 ? 'c-up' : 'c-down'}`}>{t.delta >= 0 ? '▲' : '▼'}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {detail !== null && (
+        <div className="ths-panel-overlay" onClick={() => setDetail(null)}>
+          <div className="ths-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="ths-panel-head">
+              <b>{detail.title}</b>
+              <button className="ths-panel-close" onClick={() => setDetail(null)} aria-label="关闭">
+                ✕
+              </button>
+            </div>
+            <div className="ths-panel-body">
+              {detail.lines.map(([k, v]) => (
+                <div key={k} className="depth-row">
+                  <span className="k">{k}</span>
+                  <span className="v">{v}</span>
+                </div>
+              ))}
+              <div className="queue-actions" style={{ marginTop: 10 }}>
+                {detail.path !== undefined && openPath !== undefined && (
+                  <button className="cp-action" onClick={() => { setDetail(null); void openPath(detail.path as string) }}>
+                    打开文件
+                  </button>
+                )}
+                {detail.path !== undefined && (
+                  <button
+                    className="cp-action ghost"
+                    onClick={() => {
+                      setDetail(null)
+                      void navigator.clipboard?.writeText(detail.path as string)
+                    }}
+                  >
+                    复制路径
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </aside>

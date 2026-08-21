@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { fmtToken, fmtPct, dirClass } from '../lib/format'
 import type { MarketEngine } from '../lib/useMarketEngine'
 import type { WorkspaceRow } from '../lib/workspace'
+import type { TerminalPanelKind } from '../contract'
 import { Icon, type IconName } from './icons'
 
 interface Props {
@@ -17,21 +19,26 @@ interface Props {
   onToggleCollapse?: () => void
   /** 轻提示。 */
   onNotice?: (message: string) => void
+  /** 打开左侧导航面板（技能/插件/设置）。 */
+  onOpenPanel?: (kind: TerminalPanelKind) => void
   /** 自选代码集合。 */
   favoriteCodes?: ReadonlySet<string>
   /** 切换自选。 */
   onToggleFavorite?: (code: string) => void
+  /** 清空全部自选。 */
+  onClearFavorites?: () => void
 }
 
 /** 导航：仅保留 DSH 主入口（其余为插件注入后的集成点） */
-const NAV: { label: string; icon: IconName; active?: boolean; title: string }[] = [
+const NAV: { label: string; icon: IconName; active?: boolean; title: string; panel?: TerminalPanelKind }[] = [
   { label: '对话', icon: 'assistant', active: true, title: '主界面（终端视图）' },
-  { label: '技能', icon: 'skill', title: '打开 DSH skills 窗口（集成点）' },
-  { label: '插件', icon: 'plugin', title: '打开 DSH 插件窗口（集成点）' },
-  { label: '设置', icon: 'gear', title: '打开设置界面（集成点）' },
+  { label: '技能', icon: 'skill', panel: 'skills', title: '技能面板' },
+  { label: '插件', icon: 'plugin', panel: 'plugins', title: '插件面板' },
+  { label: '设置', icon: 'gear', panel: 'settings', title: '设置面板' },
 ]
 
-export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspacesReady = false, collapsed = false, onToggleCollapse, onNotice, favoriteCodes, onToggleFavorite }: Props) {
+export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspacesReady = false, collapsed = false, onToggleCollapse, onNotice, onOpenPanel, favoriteCodes, onToggleFavorite, onClearFavorites }: Props) {
+  const [favMenuOpen, setFavMenuOpen] = useState(false)
   const realRows = workspaceRows ?? []
   const showEmpty = realWorkspacesReady && realRows.length === 0
   const watchList = realRows.length > 0
@@ -67,7 +74,6 @@ export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspaces
         </span>
         <span className="t1">
           deepseek <span style={{ fontWeight: 400, color: 'var(--dim)' }}>HARNESS</span>
-          <em>PRO</em>
         </span>
         <button className="collapse" title={collapsed ? '展开' : '折叠'} onClick={onToggleCollapse}>
           <Icon name="collapse" size={13} />
@@ -82,7 +88,11 @@ export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspaces
             aria-label={item.title}
             onClick={() => {
               if (item.active) return
-              onNotice?.(`${item.label}入口：待接入 DSH 窗口（plan.md Phase 2）`)
+              if (item.panel !== undefined && onOpenPanel !== undefined) {
+                onOpenPanel(item.panel)
+              } else {
+                onNotice?.(`${item.label}入口：当前环境未提供对应面板`)
+              }
             }}
           >
             <Icon name={item.icon} size={13} />
@@ -93,9 +103,27 @@ export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspaces
       <div className="watch">
         <div className="watch-head">
           关注项目
-          <button className="gear" title="自选设置">
-            <Icon name="gear" size={12} />
-          </button>
+          <div className="fav-gear">
+            <button className="gear" title="自选设置" onClick={() => setFavMenuOpen((o) => !o)}>
+              <Icon name="gear" size={12} />
+            </button>
+            {favMenuOpen && (
+              <div className="fav-menu">
+                <div className="step-zh">已自选 {favoriteCodes?.size ?? 0} 个标的</div>
+                {onClearFavorites !== undefined && (
+                  <button
+                    className="fav-clear"
+                    onClick={() => {
+                      onClearFavorites()
+                      setFavMenuOpen(false)
+                    }}
+                  >
+                    清空全部自选
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="watch-cols">
           <span>工作区</span>
