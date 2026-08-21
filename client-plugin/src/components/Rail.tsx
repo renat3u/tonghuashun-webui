@@ -9,6 +9,10 @@ interface Props {
   onSelect: (code: string) => void
   /** 真实 DSH 工作区行；非空时优先展示，否则回退模拟 watchlist。 */
   workspaceRows?: WorkspaceRow[]
+  /** 左栏折叠状态。 */
+  collapsed?: boolean
+  /** 切换左栏折叠。 */
+  onToggleCollapse?: () => void
 }
 
 /** 导航：仅保留 DSH 主入口（其余为插件注入后的集成点） */
@@ -19,7 +23,7 @@ const NAV: { label: string; icon: IconName; active?: boolean; title: string }[] 
   { label: '设置', icon: 'gear', title: '打开设置界面（集成点）' },
 ]
 
-export function Rail({ engine, selected, onSelect, workspaceRows }: Props) {
+export function Rail({ engine, selected, onSelect, workspaceRows, collapsed = false, onToggleCollapse }: Props) {
   const realRows = workspaceRows ?? []
   const watchList = realRows.length > 0
     ? realRows.map((row) => ({
@@ -45,7 +49,7 @@ export function Rail({ engine, selected, onSelect, workspaceRows }: Props) {
       })
 
   return (
-    <aside className="rail">
+    <aside className={`rail${collapsed ? ' collapsed' : ''}`}>
       <div className="rail-logo">
         <span className="ds">
           <Icon name="collapse" size={13} />
@@ -54,7 +58,7 @@ export function Rail({ engine, selected, onSelect, workspaceRows }: Props) {
           deepseek <span style={{ fontWeight: 400, color: 'var(--dim)' }}>HARNESS</span>
           <em>PRO</em>
         </span>
-        <button className="collapse" title="折叠">
+        <button className="collapse" title={collapsed ? '展开' : '折叠'} onClick={onToggleCollapse}>
           <Icon name="collapse" size={13} />
         </button>
       </div>

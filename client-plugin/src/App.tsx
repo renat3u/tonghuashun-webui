@@ -90,6 +90,7 @@ const EMPTY_INSTRUMENT: Instrument = {
 export default function App({ useSessions, useWorkspaces, openSession, newSession, renderChat }: AppProps) {
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
+  const [railCollapsed, setRailCollapsed] = useState(false)
   const [chartPct, setChartPct] = useState(readSavedChartPct)
   const centerRef = useRef<HTMLElement | null>(null)
   const liveSnapshot = useSnapshotPoller()
@@ -152,6 +153,27 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     }
   }, [chartPct])
 
+  // 全局快捷键：/ 聚焦输入框，Ctrl/Cmd+K 聚焦全局搜索
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const typing = target !== null
+        && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (e.key === '/' && !typing) {
+        e.preventDefault()
+        const ta = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+        ta?.focus()
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && !typing) {
+        e.preventDefault()
+        const input = document.querySelector<HTMLInputElement>('.top-search input')
+        input?.focus()
+        input?.select()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   /** 拖动分隔条调整图表高度（窗口级监听，越过画布/iframe 也不丢事件）。 */
   const startChartResize = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
@@ -179,7 +201,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     <>
       <TopBar engine={engine} onSelect={setSelected} sessions={sessionState} workspaceRows={workspaceRows} onOpenSession={openSession} onNewSession={newSession} />
       <div className="main">
-        <Rail engine={engine} selected={selected} onSelect={setSelected} workspaceRows={workspaceRows} />
+        <Rail engine={engine} selected={selected} onSelect={setSelected} workspaceRows={workspaceRows} collapsed={railCollapsed} onToggleCollapse={() => setRailCollapsed((v) => !v)} />
         <section className="center" ref={centerRef}>
           {renderChat({
             selectedName: currentInstrument.name,

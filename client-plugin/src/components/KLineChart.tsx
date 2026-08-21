@@ -60,10 +60,22 @@ type Info =
   | { kind: 'candle'; date: string; o: number; h: number; l: number; c: number; chg: number; loc: number }
   | { kind: 'line'; time: string; p: number; avg: number; vol: number }
 
+/** 根据 zoom/pan 计算可见窗口（start/count）。 */
+function visibleWindow(length: number, zoom: number, pan: number): { start: number; count: number } {
+  if (length <= 0) return { start: 0, count: 0 }
+  const count = Math.max(1, Math.min(length, Math.round(length / zoom)))
+  const maxStart = length - count
+  const start = Math.max(0, Math.min(Math.round(pan * maxStart), maxStart))
+  return { start, count }
+}
+
 export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, style }: Props) {
   const [mode, setMode] = useState<ChartMode>('daily')
   const [info, setInfo] = useState<Info | null>(null)
   const [pulse, setPulse] = useState(false)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState(0)
+  const panRef = useRef<{ x: number; pan: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hoverRef = useRef(-1)
   const setInfoRef = useRef(setInfo)
@@ -123,35 +135,40 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     ctx.font = MONO
     ctx.textBaseline = 'middle'
 
+    const len = series.kind === 'candle' ? series.candles.length : series.points.length
+    const win = visibleWindow(len, zoom, pan)
+    const visibleSeries = series.kind === 'candle'
+      ? { kind: 'candle' as const, candles: series.candles.slice(win.start, win.start + win.count) }
+      : { kind: 'line' as const, points: series.points.slice(win.start, win.start + win.count), intraday: series.intraday }
     const hover = hoverRef.current
 
-    if (series.kind === 'candle') {
+    if (visibleSeries.kind === 'candle') {
       drawCandleView(ctx, {
         W, H, padL, padR, padT, padB, mainH, volTop, volH, plotW,
-        candles: series.candles, crash, pulse, hover, prevToken,
+        candles: visibleSeries.candles, crash, pulse, hover, prevToken,
       })
     } else {
       drawLineView(ctx, {
         W, H, padL, padR, padT, padB, mainH, volTop, volH, plotW,
-        points: series.points, intraday: series.intraday, crash, hover,
+        points: visibleSeries.points, intraday: visibleSeries.intraday, crash, hover,
         baseMinute: prevToken / 240,
-        livePrice: mode === 'intraday' ? livePrice : null,
+        livePrice: mode === 'intraday' && win.start + win.count >= len ? livePrice : null,
       })
     }
 
     // 信息条
-    if (series.kind === 'candle') {
-      const n = series.candles.length
+    if (visibleSeries.kind === 'candle') {
+      const n = visibleSeries.candles.length
       if (n === 0) return
       const idx = hover >= 0 && hover < n ? hover : n - 1
-      const k = series.candles[idx]
+      const k = visibleSeries.candles[idx]
       const chg = (k.c - k.o) / k.o * 100
       setInfoRef.current({ kind: 'candle', date: fmtDateSlash(new Date(k.t)), o: k.o, h: k.h, l: k.l, c: k.c, chg, loc: k.loc })
     } else {
-      const n = series.points.length
+      const n = visibleSeries.points.length
       const idx = hover >= 0 && hover < n ? hover : n - 1
-      const p = series.points[idx]
-      const time = series.intraday ? fmtTime(p.t % 24) : fmtDateSlash(new Date(p.t))
+      const p = visibleSeries.points[idx]
+      const time = visibleSeries.intraday ? fmtTime(p.t % 24) : fmtDateSlash(new Date(p.t))
       setInfoRef.current({ kind: 'line', time, p: p.p, avg: p.avg, vol: p.vol })
     }
   }
@@ -161,7 +178,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   useEffect(() => {
     paint()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, crash, pulse, version, livePrice])
+  }, [series, crash, pulse, version, livePrice, zoom, pan])
 
   // 尺寸自适应（paintRef 每次渲染更新，避免闭包过期）
   const paintRef = useRef(paint)
@@ -180,7 +197,13 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     const r = canvas.getBoundingClientRect()
     const padL = 52
     const padR = 12
-    const n = series.kind === 'candle' ? series.candles.length : series.points.length
+    const len = series.kind === 'candle' ? series.candles.length : series.points.length
+    const win = visibleWindow(len, zoom, pan)
+    const n = win.count
+    if (n <= 0) {
+      hoverRef.current = -1
+      return
+    }
     const slot = (r.width - padL - padR) / n
     const i = Math.floor((e.clientX - r.left - padL) / slot)
     const nh = i >= 0 && i < n ? i : -1
@@ -193,6 +216,64 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const onMouseLeave = () => {
     hoverRef.current = -1
     paint()
+  }
+
+  const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault()
+    const factor = e.deltaY < 0 ? 1.25 : 0.8
+    const nextZoom = Math.max(1, Math.min(20, zoom * factor))
+    setZoom(nextZoom)
+    setPan((prev) => prev)
+  }
+
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    panRef.current = { x: e.clientX, pan }
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const start = panRef.current
+    if (start === null) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const r = canvas.getBoundingClientRect()
+    const dx = e.clientX - start.x
+    const len = series.kind === 'candle' ? series.candles.length : series.points.length
+    const win = visibleWindow(len, zoom, pan)
+    const maxPan = len - win.count
+    if (maxPan <= 0) return
+    const nextPan = Math.max(0, Math.min(1, start.pan - dx / r.width))
+    setPan(nextPan)
+  }
+
+  const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    panRef.current = null
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      // 指针已释放时忽略
+    }
+  }
+
+  const onDoubleClick = () => {
+    setZoom(1)
+    setPan(0)
+    hoverRef.current = -1
+    paint()
+  }
+
+  const toggleFullscreen = async () => {
+    const el = document.documentElement
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        await el.requestFullscreen()
+      }
+    } catch {
+      // 浏览器不支持全屏时静默失败
+    }
   }
 
   return (
@@ -222,7 +303,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
             指标
             <Icon name="chevronDown" size={8} />
           </button>
-          <button title="全屏" onClick={() => setMode((m) => m)}>
+          <button title="全屏" onClick={() => void toggleFullscreen()}>
             <Icon name="expand" size={11} />
           </button>
         </div>
@@ -267,8 +348,15 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
         <canvas
           ref={canvasRef}
           className="kchart-canvas"
+          style={{ touchAction: 'none' }}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
+          onWheel={onWheel}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onDoubleClick={onDoubleClick}
           aria-label={`${code} K线图`}
         />
       </div>

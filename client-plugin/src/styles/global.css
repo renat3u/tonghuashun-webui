@@ -273,6 +273,23 @@ button {
   min-height: 0;
 }
 
+.rail.collapsed {
+  width: 56px;
+  flex-basis: 56px;
+}
+.rail.collapsed .t1,
+.rail.collapsed .nav,
+.rail.collapsed .watch {
+  display: none;
+}
+.rail.collapsed .rail-logo {
+  justify-content: center;
+  padding: 0;
+}
+.rail.collapsed .rail-logo .collapse {
+  display: none;
+}
+
 .rail-logo {
   height: 46px;
   display: flex;
@@ -1536,6 +1553,22 @@ button {
   border: none;
   padding: 2px;
   display: flex;
+}
+
+.tape-show {
+  margin: 8px 14px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--dim);
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+}
+.tape-show:hover {
+  color: var(--text);
+  border-color: var(--border);
 }
 
 .tape-cols,

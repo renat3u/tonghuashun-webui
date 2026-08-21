@@ -180,7 +180,11 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
         </div>
       )}
 
-      {!hideTape && (
+      {hideTape ? (
+        <button className="tape-show" title="显示分时成交" onClick={() => setHideTape(false)}>
+          显示分时成交
+        </button>
+      ) : (
         <div className="tape">
           <div className="tape-head">
             分时成交
