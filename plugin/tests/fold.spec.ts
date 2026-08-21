@@ -82,6 +82,17 @@ test('tool/call 事件回调携带时间与 cwd，未知事件跳过', () => {
   assert.deepEqual(calls, [[700, '/proj'], [900, '/proj']])
 })
 
+test('tool/call 事件回调同时携带工具名（缺失时为 undefined）', () => {
+  const events = [
+    event('tool/call', 0, 700, { name: 'edit' }),
+    event('tool/call', 1, 800, { name: 'read' }),
+    event('tool/call', 2, 900, {}),
+  ]
+  const calls: [number, string | undefined, string | undefined][] = []
+  foldSession(session(events, '/proj'), { consumed: 0 }, () => {}, (ts, cwd, name) => calls.push([ts, cwd, name]))
+  assert.deepEqual(calls, [[700, '/proj', 'edit'], [800, '/proj', 'read'], [900, '/proj', undefined]])
+})
+
 test('后续 request/header 更新模型归属', () => {
   const events = [
     event('request/header', 0, 500, { header: { config: { model: 'm1' } } }),

@@ -41,6 +41,10 @@ export interface ChangeRow {
   msg: string
   add: number
   del: number
+  /** 提交时间（真实 git 数据提供；模拟数据缺省）。 */
+  ts?: number
+  /** 该文件的 unified diff 摘要（真实 git 数据提供；缺省表示无 diff）。 */
+  diff?: string
 }
 
 /** 分时成交 = 每分钟 Token 消耗 */
@@ -65,6 +69,8 @@ export interface TreeRow {
   path: string
   add: number
   del: number
+  /** 真实 git tree 中聚合目录行标记；缺省视为文件。 */
+  directory?: boolean
 }
 
 export interface Instrument {

@@ -1107,6 +1107,19 @@ button {
   padding: 0 2px;
 }
 
+.attachment-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid rgba(224, 168, 74, 0.4);
+  border-radius: 4px;
+  background: rgba(224, 168, 74, 0.1);
+  color: #ffd9a0;
+  font-size: 10.5px;
+}
+
 .composer .row {
   display: flex;
   align-items: center;
@@ -1306,6 +1319,20 @@ button {
   max-width: 180px;
   background: none;
   cursor: pointer;
+}
+
+.model-static .perm-label {
+  margin-right: 5px;
+}
+
+.model-static .perm-current {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.model-static .perm-current.unknown {
+  color: var(--faint);
+  font-weight: 400;
 }
 
 .model-select {
@@ -2370,6 +2397,22 @@ button {
   padding: 10px 14px;
   overflow-y: auto;
   min-height: 120px;
+}
+
+.diff-body {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  background: #0b0e17;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--dim);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .ths-panel-hint {

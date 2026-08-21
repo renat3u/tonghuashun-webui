@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { TerminalChat } from './TerminalChat'
-import type { ChatPanelProps, ConversationNodeLike } from '../contract'
+import type { ChatPanelProps, ConversationNodeLike, PermissionSelectLike } from '../contract'
 import {
   lastModelOf,
   nodesToMessages,
@@ -15,13 +15,25 @@ const VERSION = '0.1.0'
  * terminal.chat 槽条目（single / session-maybe）：经框架 useSession 座位读取
  * 当前会话的 ConversationSnapshot，把真实消息/轨迹映射进纯表现组件
  * TerminalChat；send/cancel/newSession 回调来自 inject 面（闭包持有 apply ctx）。
- * 组件自身不建任何订阅机制。
+ * 权限当前值来自会话 permissions 投影（可订阅）；无投影时 UI 显示“未知”。
  */
 export function ChatPanel(props: ChatPanelProps) {
-  const { useSession, sessionId, send, cancel, newSession, command, updateQueue, selectedName, sessionTitle, sessionCwd, modelOptions } = props
+  const {
+    useSession, sessionId, send, cancel, newSession, command, updateQueue,
+    selectedName, sessionTitle, sessionCwd, modelOptions,
+    permissionSelect, subscribePermission,
+  } = props
   const snapshot = useSession((s) => s)
   const [localError, setLocalError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [permission, setPermission] = useState<PermissionSelectLike | undefined>(() => permissionSelect?.())
+
+  // permissions 投影是独立于 conversation 快照的可观察源：订阅它保持按钮实时。
+  useEffect(() => {
+    setPermission(permissionSelect?.())
+    if (subscribePermission === undefined) return
+    return subscribePermission(() => setPermission(permissionSelect?.()))
+  }, [permissionSelect, subscribePermission])
 
   const messages = useMemo(() => nodesToMessages(snapshot?.nodes ?? []), [snapshot])
   const queue = useMemo(() => snapshot?.queue ?? [], [snapshot])
@@ -76,6 +88,7 @@ export function ChatPanel(props: ChatPanelProps) {
       partialText={snapshot ? partialTextOf(snapshot) : ''}
       error={error}
       hasSession={sessionId !== undefined}
+      permission={permission}
       onSend={onSend}
       onCancel={cancel}
       onNewSession={newSession}

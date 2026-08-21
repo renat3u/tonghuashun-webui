@@ -110,6 +110,34 @@ test('mapSnapshot 完整映射（关注项目/指数/日K/分时）', () => {
   assert.equal(live.fiveDay.length, 2)
 })
 
+test('mapSnapshot 映射真实 changes / gitTree / locSeries（无 git 数据时空态）', () => {
+  const withGit: Snapshot = {
+    ...SNAP,
+    workspaces: SNAP.workspaces.map((ws) => ws.cwd === 'E:\\WSL'
+      ? {
+          ...ws,
+          changes: [{ ts: 1000, time: '14:30', path: 'src/a.ts', msg: 'feat', add: 3, del: 1, diff: '+a' }],
+          gitTree: [{ depth: 0, path: 'src/', add: 3, del: 1, directory: true }, { depth: 1, path: 'src/a.ts', add: 3, del: 1 }],
+          locSeries: [{ date: '2026-08-13', added: 3, deleted: 1, net: 2 }],
+        }
+      : ws),
+  }
+  const live = mapSnapshot(withGit)
+  const code = wsCode('E:\\WSL')
+  const changes = live.changesByWorkspace.get(code) ?? []
+  assert.equal(changes.length, 1)
+  assert.equal(changes[0]?.path, 'src/a.ts')
+  assert.equal(changes[0]?.diff, '+a')
+  const tree = live.gitTreeByWorkspace.get(code) ?? []
+  assert.equal(tree[0]?.directory, true)
+  assert.equal(tree[1]?.depth, 1)
+  assert.equal(live.dailyByWorkspace.get(code)?.[1]?.loc, 2)
+  // 无 git 数据的工作区：空数组而不是模拟数据
+  const other = live.changesByWorkspace.get(wsCode('E:\\WSL\\a')) ?? []
+  assert.deepEqual(other, [])
+  assert.deepEqual(live.gitTreeByWorkspace.get(wsCode('E:\\WSL\\a')) ?? [], [])
+})
+
 test('daySeriesToPoints 截取近 N 日', () => {
   const points = daySeriesToPoints([day('2026-08-10', 1), day('2026-08-11', 2), day('2026-08-12', 3), day('2026-08-13', 4)], 2)
   assert.equal(points.length, 2)

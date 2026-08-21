@@ -108,6 +108,53 @@ export interface WorkspaceStat {
   tokens: number
   sessions: number
   toolCalls: number
+  /**
+   * Recent committed changes read from the workspace git repository
+   * (newest first). Absent when the workspace is not a git repository or
+   * git is unavailable — clients must show an empty state, never invent data.
+   */
+  changes?: WorkspaceChange[]
+  /** File tree of the latest commit. */
+  gitTree?: WorkspaceTreeEntry[]
+  /** Per-day LOC history (added/deleted/net) folded from recent commits. */
+  locSeries?: WorkspaceLocDay[]
+}
+
+/** One committed file change (最近变更 row). */
+export interface WorkspaceChange {
+  /** Commit epoch ms. */
+  ts: number
+  /** Local 'HH:MM' display time. */
+  time: string
+  /** Workspace-relative path (forward slashes). */
+  path: string
+  /** Commit subject. */
+  msg: string
+  add: number
+  del: number
+  /** Optional truncated unified diff for the row (never synthesized). */
+  diff?: string
+}
+
+/** One row of the latest commit's file tree. */
+export interface WorkspaceTreeEntry {
+  /** Directory depth (0 = workspace root level). */
+  depth: number
+  /** Workspace-relative path; directory rows end with '/'. */
+  path: string
+  add: number
+  del: number
+  /** True when the row aggregates a directory rather than one file. */
+  directory?: boolean
+}
+
+/** One day of net LOC movement for the K-line volume pane. */
+export interface WorkspaceLocDay {
+  /** Local 'YYYY-MM-DD'. */
+  date: string
+  added: number
+  deleted: number
+  net: number
 }
 
 /** Aggregated model. */

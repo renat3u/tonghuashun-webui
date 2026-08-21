@@ -96,7 +96,7 @@ export function useSnapshotPoller(intervalMs = 5000): Snapshot | null {
   return snapshot
 }
 
-/** LiveMarket -> MarketStatic（live 模式下的静态面；changes/gitTree 保留模拟）。 */
+/** LiveMarket -> MarketStatic（live 模式下 changes/gitTree 只用真实 git 数据，缺失即空态）。 */
 function marketStaticFromLive(live: LiveMarket, fallback: MarketStatic): MarketStatic {
   // 真实 DSH 尚无工作区/会话时，快照 workspaces 为空；先回退到模拟行情，
   // 避免终端首屏因空列表崩溃，等工作区数据到达后再切到 live 面。
@@ -130,7 +130,7 @@ function marketStaticFromLive(live: LiveMarket, fallback: MarketStatic): MarketS
   const tape = new Map<string, TapeRow[]>()
   const tokenFlow = new Map<string, FlowRow[]>()
   for (const ins of instruments) {
-    daily.set(ins.code, live.daily)
+    daily.set(ins.code, live.dailyByWorkspace.get(ins.code) ?? live.daily)
     intraday.set(ins.code, live.intraday)
     fiveDay.set(ins.code, live.fiveDay)
     tape.set(ins.code, live.tape)
@@ -142,9 +142,10 @@ function marketStaticFromLive(live: LiveMarket, fallback: MarketStatic): MarketS
     intraday,
     fiveDay,
     tape,
-    changes: fallback.changes,
+    // live 模式绝不回退模拟变更/文件树：meter 未采集 git 时为空数组。
+    changes: live.changesByWorkspace,
     tokenFlow,
-    gitTree: fallback.gitTree,
+    gitTree: live.gitTreeByWorkspace,
     indices: live.indices,
   }
 }
@@ -268,9 +269,10 @@ export function useMarketEngine(selectedCode: string, live?: Snapshot | null): M
     lastPriceRef.current = staticData.instruments.find((x) => x.code === selectedCode)?.last ?? 0
   }, [selectedCode, staticData])
 
-  // live 模式：报价/分时/流向/指数全部来自快照（tick 仅驱动图表刷新）
+  // live 模式：报价/分时/流向/指数全部来自快照（tick 仅驱动图表刷新）。
+  // useMemo 以 `live` prop 为依赖：每次快照轮询到新对象都会重映射，避免只消费首帧。
   return useMemo(() => {
-    const liveMarket = liveRef.current
+    const liveMarket = live === undefined || live === null ? null : mapSnapshot(live)
     if (liveMarket === null) {
       return { static: staticData, quotes, tape, changes, tokenFlow, indices, tick, clock, live: false }
     }
@@ -298,7 +300,7 @@ export function useMarketEngine(selectedCode: string, live?: Snapshot | null): M
       clock,
       live: true,
     }
-  }, [liveRef.current === null, staticData, quotes, tape, changes, tokenFlow, indices, tick, clock, selectedCode])
+  }, [live, staticData, quotes, tape, changes, tokenFlow, indices, tick, clock, selectedCode])
 }
 
 /** 由引擎取某工作区实时报价；回退到静态数据 */

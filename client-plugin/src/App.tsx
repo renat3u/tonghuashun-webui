@@ -11,6 +11,7 @@ import { buildWorkspaceRows, type WorkspaceRow } from './lib/workspace'
 import type { Instrument } from './lib/market'
 import type {
   ChatOwnerProps,
+  FileReferenceCandidateLike,
   PluginEntryLike,
   SessionListStateLike,
   SkillEntryLike,
@@ -54,6 +55,8 @@ export interface AppProps {
   listPlugins?: () => Promise<readonly PluginEntryLike[]>
   /** 在系统默认应用中打开 DSH 设置文档（真实 DSH 环境提供）。 */
   openSettingsDocument?: () => Promise<boolean>
+  /** 搜索当前工作区文件索引（DSH fileReferences；独立运行模式缺省）。 */
+  searchWorkspaceFiles?: (query: string, signal?: AbortSignal) => Promise<readonly FileReferenceCandidateLike[] | null>
   /** 渲染 ChatPanel 槽位（TerminalRoot 的 renderSlot 绑定）。 */
   renderChat: (owner: ChatOwnerProps) => ReactNode
 }
@@ -106,7 +109,7 @@ const EMPTY_INSTRUMENT: Instrument = {
   seed: 0,
 }
 
-export default function App({ useSessions, useWorkspaces, openSession, newSession, openPath, command, listSkills, listPlugins, openSettingsDocument, renderChat }: AppProps) {
+export default function App({ useSessions, useWorkspaces, openSession, newSession, openPath, command, listSkills, listPlugins, openSettingsDocument, searchWorkspaceFiles, renderChat }: AppProps) {
   const [selected, setSelected] = useState('DSH001')
   const [pinned, setPinned] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
@@ -179,6 +182,12 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
   }, [hasRealWorkspaces, workspaceRows, resolvedCode, engine.static])
 
   const currentInstrument = instrument ?? EMPTY_INSTRUMENT
+
+  /** 当前选中工作区 cwd（meter git 相对路径的拼装根）。 */
+  const selectedWorkspaceCwd = useMemo(() => {
+    if (!hasRealWorkspaces) return undefined
+    return workspaceRows.find((r) => r.code === resolvedCode)?.cwd ?? workspaceRows[0]?.cwd
+  }, [hasRealWorkspaces, workspaceRows, resolvedCode])
 
   // 真实工作区下：有 meter 快照时直接使用 live K 线；无快照时留空等待。
   const hasLiveEngineData = engine.live && liveSnapshot !== null
@@ -310,10 +319,14 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
         sessions={sessionState}
         workspaceRows={workspaceRows}
         modelRows={liveSnapshot?.models ?? []}
-        filePaths={[
-          ...(engine.static.gitTree.get(selected) ?? []).map((t) => t.path),
-          ...engine.changes.map((c) => c.path),
-        ]}
+        searchFiles={searchWorkspaceFiles}
+        filePaths={searchWorkspaceFiles === undefined
+          ? [
+              ...(engine.static.gitTree.get(resolvedCode) ?? []).map((t) => t.path),
+              ...engine.changes.map((c) => c.path),
+            ]
+          : undefined}
+        fileCwd={currentSummary?.cwd}
         onOpenSession={openSession}
         onNewSession={newSession}
         onOpenPath={openPath}
@@ -387,9 +400,10 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
           tape={engine.tape}
           changes={engine.changes}
           tokenFlow={engine.tokenFlow}
-          gitTree={engine.static.gitTree.get(selected) ?? []}
+          gitTree={engine.static.gitTree.get(resolvedCode) ?? []}
           pinned={pinned}
           onTogglePin={() => setPinned((p) => !p)}
+          workspaceCwd={selectedWorkspaceCwd}
           openPath={openPath}
           depth={{
             running: currentSummary?.running ?? false,

@@ -20,6 +20,7 @@ export function TerminalRoot(props: RootProps): ReactElement {
     listSkills,
     listPlugins,
     openSettingsDocument,
+    searchWorkspaceFiles,
   } = props
   return (
     <App
@@ -32,6 +33,7 @@ export function TerminalRoot(props: RootProps): ReactElement {
       listSkills={listSkills}
       listPlugins={listPlugins}
       openSettingsDocument={openSettingsDocument}
+      searchWorkspaceFiles={searchWorkspaceFiles}
       renderChat={(owner) => renderSlot('terminal.chat', owner)}
     />
   )

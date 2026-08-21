@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fmt, fmtPct, dirClass } from '../lib/format'
 import type { MarketEngine } from '../lib/useMarketEngine'
-import type { WorkspaceRow } from '../lib/workspace'
-import type { SessionListStateLike } from '../contract'
+import { joinWorkspacePath, type WorkspaceRow } from '../lib/workspace'
+import type { FileReferenceCandidateLike, SessionListStateLike } from '../contract'
 import { Icon } from './icons'
 
 interface Props {
@@ -14,8 +14,15 @@ interface Props {
   workspaceRows?: WorkspaceRow[]
   /** 真实快照中的模型列表。 */
   modelRows?: readonly { model: string; tokens: number }[]
-  /** 当前工作区可搜索的文件路径。 */
+  /**
+   * 真实 DSH 文件索引搜索（fileReferences 远程面）；
+   * 独立运行模式缺省，此时退回 `filePaths` 静态列表。
+   */
+  searchFiles?: (query: string, signal?: AbortSignal) => Promise<readonly FileReferenceCandidateLike[] | null>
+  /** 独立运行/无真实索引时的静态文件路径。 */
   filePaths?: readonly string[]
+  /** 当前工作区 cwd：真实文件索引返回相对路径，点击时拼回绝对路径。 */
+  fileCwd?: string
   /** 打开指定会话。 */
   onOpenSession: (id: string) => void
   /** 新建会话。 */
@@ -30,13 +37,15 @@ type SearchHit =
   | { kind: 'workspace'; code: string; name: string; sub: string; last: number; pct: number }
   | { kind: 'session'; id: string; title: string; sub: string }
   | { kind: 'model'; name: string; sub: string; tokens: number }
-  | { kind: 'file'; path: string; sub: string }
+  | { kind: 'file'; path: string; rel: string; sub: string; directory: boolean }
 
-export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, filePaths, onOpenSession, onNewSession, onOpenPath, onCommand }: Props) {
+export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, searchFiles, filePaths, fileCwd, onOpenSession, onNewSession, onOpenPath, onCommand }: Props) {
   const [q, setQ] = useState('')
   const [focused, setFocused] = useState(false)
   const [selIdx, setSelIdx] = useState(0)
   const [sessOpen, setSessOpen] = useState(false)
+  const [fileResults, setFileResults] = useState<readonly FileReferenceCandidateLike[] | null>(null)
+  const [fileScanning, setFileScanning] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -47,6 +56,43 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, f
     window.addEventListener('ths:close-popovers', close)
     return () => window.removeEventListener('ths:close-popovers', close)
   }, [])
+
+  // 真实文件索引：防抖异步搜索；独立运行（searchFiles 缺省）时不启动。
+  useEffect(() => {
+    if (searchFiles === undefined) {
+      setFileResults(null)
+      setFileScanning(false)
+      return
+    }
+    const kw = q.trim()
+    if (kw.length === 0) {
+      setFileResults([])
+      setFileScanning(false)
+      return
+    }
+    const controller = new AbortController()
+    let alive = true
+    setFileScanning(true)
+    const timer = setTimeout(() => {
+      void searchFiles(kw, controller.signal).then(
+        (result) => {
+          if (!alive) return
+          setFileScanning(false)
+          setFileResults(result)
+        },
+        () => {
+          if (!alive) return
+          setFileScanning(false)
+          setFileResults(null)
+        },
+      )
+    }, 180)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [q, searchFiles])
 
   const sessionRows = useMemo(
     () => [...sessions.ids].reverse().map((id) => sessions.byId[id]).filter((row) => row !== undefined),
@@ -83,13 +129,28 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, f
         hits.push({ kind: 'model', name: row.model, sub: '模型', tokens: row.tokens })
       }
     }
-    for (const path of filePaths ?? []) {
-      if (path.toLowerCase().includes(kw)) {
-        hits.push({ kind: 'file', path, sub: '文件' })
+    if (searchFiles !== undefined) {
+      // 真实索引：fileReferences 已经按 query 排名，直接展示前若干条。
+      for (const entry of fileResults ?? []) {
+        if (hits.length >= 8) break
+        const absolute = fileCwd !== undefined ? joinWorkspacePath(fileCwd, entry.path) : entry.path
+        hits.push({
+          kind: 'file',
+          path: absolute,
+          rel: entry.path,
+          sub: absolute,
+          directory: entry.kind === 'directory',
+        })
+      }
+    } else {
+      for (const path of filePaths ?? []) {
+        if (path.toLowerCase().includes(kw)) {
+          hits.push({ kind: 'file', path, rel: path, sub: '文件', directory: path.endsWith('/') })
+        }
       }
     }
     return hits.slice(0, 8)
-  }, [q, engine.static, engine.quotes, workspaceRows, sessionRows, modelRows, filePaths])
+  }, [q, engine.static, engine.quotes, workspaceRows, sessionRows, modelRows, searchFiles, fileResults, filePaths, fileCwd])
 
   const currentRow = sessions.current !== undefined ? sessions.byId[sessions.current] : undefined
   const currentLabel = currentRow?.displayTitle ?? '选择会话'
@@ -116,6 +177,13 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, f
       setFocused(false)
     }
   }
+
+  const emptyText = useMemo(() => {
+    if (!q.trim()) return '输入名称或代码，如 dsh、WEB006、文件路径'
+    if (fileScanning) return '工作区文件索引搜索中…'
+    if (searchFiles !== undefined && fileResults === null) return '未找到匹配项（文件索引当前不可用）'
+    return '未找到匹配的包 / 会话 / 文件'
+  }, [q, fileScanning, searchFiles, fileResults])
 
   return (
     <header className="topbar">
@@ -148,7 +216,7 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, f
           <Icon name="search" size={12} />
           <input
             value={q}
-            placeholder="代码 / 会话 / 拼音"
+            placeholder="代码 / 会话 / 文件"
             onChange={(e) => {
               setQ(e.target.value)
               setSelIdx(0)
@@ -161,13 +229,13 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, f
         {focused && (
           <div className="results">
             {matches.length === 0 && (
-              <div className="empty">{q.trim() ? '未找到匹配的包 / 会话' : '输入名称或代码，如 dsh、WEB006'}</div>
+              <div className="empty">{emptyText}</div>
             )}
             {matches.map((hit, i) => {
               const cls = hit.kind === 'workspace' ? dirClass(hit.pct) : ''
               const key = hit.kind === 'workspace' ? hit.code : hit.kind === 'session' ? hit.id : hit.kind === 'model' ? hit.name : hit.path
-              const name = hit.kind === 'workspace' ? hit.name : hit.kind === 'session' ? hit.title : hit.kind === 'model' ? hit.name : hit.path
-              const cd = hit.kind === 'workspace' ? hit.code : hit.kind === 'session' ? '会话' : hit.kind === 'model' ? '模型' : '文件'
+              const name = hit.kind === 'workspace' ? hit.name : hit.kind === 'session' ? hit.title : hit.kind === 'model' ? hit.name : hit.rel
+              const cd = hit.kind === 'workspace' ? hit.code : hit.kind === 'session' ? '会话' : hit.kind === 'model' ? '模型' : hit.directory ? '目录' : '文件'
               return (
                 <div
                   key={key}

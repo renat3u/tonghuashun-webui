@@ -23,8 +23,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { UsageAggregator } from './aggregate.js'
 import { foldSession, type FoldCursor } from './fold.js'
+import { WorkspaceGitIndex } from './git.js'
 import { createStore, resolveDataDir } from './store.js'
-import type { MeterSession } from './types.js'
+import type { MeterSession, Snapshot, WorkspaceStat } from './types.js'
+
+/** Tool calls that may change files on disk; they invalidate the git cache. */
+const FILE_MUTATING_TOOLS = new Set(['edit', 'write', 'str_replace_editor', 'bash', 'tool-fs'])
 
 export const name = '@deepseek-ai/dsh-tonghuashun-meter'
 
@@ -42,10 +46,21 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** Attach cached git views to the snapshot's workspace rows (never throws). */
+async function attachGitViews(snapshot: Snapshot, gitIndex: WorkspaceGitIndex): Promise<Snapshot> {
+  const workspaces: WorkspaceStat[] = await Promise.all(snapshot.workspaces.map(async (workspace) => {
+    const view = await gitIndex.view(workspace.cwd, snapshot.generatedAt)
+    if (view === null) return workspace
+    return { ...workspace, changes: view.changes, gitTree: view.gitTree, locSeries: view.locSeries }
+  }))
+  return { ...snapshot, workspaces }
+}
+
 export function apply(ctx: Context, config: Config = {}): () => void {
   const dataDir = resolveDataDir(config.dataDir)
   const store = createStore(dataDir, (message, cause) => ctx.logger.warn(message, cause))
   const aggregator = new UsageAggregator()
+  const gitIndex = new WorkspaceGitIndex()
   const cursors = new WeakMap<object, FoldCursor>()
   // 不输出具体 dataDir，避免在日志中暴露本机路径。
   ctx.logger.info('tonghuashun-meter: loaded')
@@ -79,7 +94,12 @@ export function apply(ctx: Context, config: Config = {}): () => void {
         aggregator.fold(record)
         void store.appendUsage([record])
       },
-      (ts, cwd) => aggregator.countToolCall(ts, cwd),
+      (ts, cwd, toolName) => {
+        aggregator.countToolCall(ts, cwd)
+        if (toolName !== undefined && FILE_MUTATING_TOOLS.has(toolName)) {
+          gitIndex.invalidate(cwd)
+        }
+      },
     )
     store.commitDays(aggregator.dayRows())
   })
@@ -92,17 +112,25 @@ export function apply(ctx: Context, config: Config = {}): () => void {
       () => c.webServer.register({
         kind: 'exact',
         path: '/tonghuashun/snapshot',
-        handler: (req, res) => {
+        handler: async (req, res) => {
           if (req.method !== 'GET' && req.method !== 'HEAD') {
             res.statusCode = 405
             res.setHeader('allow', 'GET, HEAD')
             res.end()
             return
           }
+          const base = aggregator.snapshot(Date.now())
+          // git 读取失败时保留基础快照（前端对缺失字段显示空态）。
+          let snapshot = base
+          try {
+            snapshot = await attachGitViews(base, gitIndex)
+          } catch (error) {
+            ctx.logger.warn('tonghuashun-meter: git index failed', error)
+          }
           res.statusCode = 200
           res.setHeader('content-type', 'application/json; charset=utf-8')
           res.setHeader('cache-control', 'no-store')
-          res.end(JSON.stringify(aggregator.snapshot(Date.now())))
+          res.end(JSON.stringify(snapshot))
         },
       }),
       'tonghuashun-meter: /tonghuashun/snapshot route',

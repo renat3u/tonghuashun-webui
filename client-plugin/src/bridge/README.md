@@ -4,58 +4,57 @@
 
 ## 定位：插件注入，替换 DSH 默认 Web 界面
 
-本前端的最终形态是 **DSH 客户端插件**：
+1. 生产构建（`npm run build`）把本包打成 DSH 客户端插件资源；
+2. 插件在 DSH Web 外壳（`dsh web` 注入 `window.__DSH_BOOT__`）挂载本前端，注册 `root` 槽替换默认界面；
+3. `useMarketEngine` 轮询 meter 插件的 `GET /tonghuashun/snapshot`；检测到 live 快照后行情切换到真实数据，
+   独立运行（无快照）时保留模拟行情并显示 `demo · mock market` 徽标。
 
-1. 生产构建（`npm run build` → `dist/`）被打包为 DSH 插件资源；
-2. 插件在 DSH Web 外壳（`dsh web` 注入 `window.__DSH_BOOT__` 之后）挂载本前端；
-3. `createProvider()` 检测到 `window.__DSH_BOOT__` 后返回 `LiveProvider`，
-   页面右下角 `demo · mock market` 徽标自动隐藏，行情/轨迹切换到真实数据。
+## 真实数据面（当前实现）
 
-## 当前状态
+| 数据 | 来源 | 说明 |
+|---|---|---|
+| 工作区 / 会话 / 队列 / 子代理 / 任务 | slots + `useSessions` / `useWorkspaces` | `client/index.ts` 注册 root + terminal.chat |
+| 对话 / Trajectory / 检查点 | 会话节点快照（`useSession`） | 本包自带 6 个 conversation definition + 1 个 chat view builder |
+| Token 指数 / K 线 / 分时 / 流向 | `GET /tonghuashun/snapshot` | `snapshot.ts` 的 `mapSnapshot` |
+| 最近变更 / git tree / LOC | 同上快照的 `workspaces[].changes / gitTree / locSeries` | meter 插件直接读取工作区 git 仓库；非 git 仓库字段缺省 → UI 显示空态 |
+| 权限当前值 | 会话 `permissions` 投影 | `session.projections.faceOf('permissions')`，按钮实时显示当前 preset；缺失显示“未知” |
+| 文件搜索 | `remote.fileReferences.list`（file-reference 索引） | 环境未装配该 remote namespace 时显示“文件索引当前不可用”，不回退模拟 |
 
-- **独立运行**（`npm run dev` 直接启动）：`createProvider()` 返回 `MockProvider`，
-  行情与轨迹全部由 `src/lib/useMarketEngine.ts` + `src/data/trajectory.ts` 模拟。
-- **嵌入 DSH Web 外壳**：检测到 `window.__DSH_BOOT__` 注入后返回 `LiveProvider`。
+## 数据契约（meter 插件）
 
-## 数据契约
+插件快照契约（本包 `src/bridge/snapshot.ts` 已含类型与 `fetchSnapshot()`）：
 
-前端与数据插件 **dsh-tonghuashun-meter**（`plugin/` 目录，bundle 形态）通过 HTTP 契约对接：
+- `GET /tonghuashun/snapshot` → `Snapshot`（分钟桶 / 日聚合 / 工作区 / 模型）
+- `workspaces[]` 新增可选 git 字段：
+  - `changes: { ts, time, path, msg, add, del, diff? }[]` — 最近提交（每文件一行，最新在前）
+  - `gitTree: { depth, path, add, del, directory? }[]` — HEAD 提交文件树（含聚合目录行）
+  - `locSeries: { date, added, deleted, net }[]` — 近 180 天净代码量，合并进日 K `loc` 子图
+- 无 git 数据时字段**缺省**，前端绝不回退模拟数据；diff 只有真实 git show 可读时才附带。
 
-```ts
-interface DshProvider {
-  live: boolean
-  version: string
-  sessionId(): string | null
-  onTrajectory(cb: (ev: TrajectoryEvent) => void): () => void
-  locSeries(code: string): Promise<LocSample[]>
-}
-```
+## 旧 provider 接口（已弃用，保留仅为历史契约）
 
-- `TrajectoryEvent` 对应「对话 / Trajectory」区的一行（◆ Think / ↗ Read / $ Bash / ✦ Skill / ↗ Edit）
-- `LocSample` 是 K 线数据源（代码变更行数），喂给 `KLineChart` 子图
+`bridge/index.ts` 的 `DshProvider.onTrajectory` / `locSeries` 不再有调用方：
 
-**插件快照契约**（本包 `src/bridge/snapshot.ts` 已含类型与 `fetchSnapshot()`）：
+- 轨迹已由 `ChatPanel` 的真实会话节点映射替代（`session-map.ts` + conversation view builder）；
+- K 线 LOC 已由快照 `locSeries` 替代；
+- 接口与 `TrajectoryEvent` / `LocSample` 类型标注 `@deprecated`，后续大版本可直接删除。
+- `isLiveBridge()` 仍用于：快照轮询开关、demo 徽标、live 空态判断。
 
-- `GET /tonghuashun/snapshot` → `Snapshot`（分钟桶 / 日聚合 / 工作区 / 模型，见 plugin/README.md）
-- 映射关系：`minuteSeries` → 分时成交，`daySeries` → 日 K，`workspaces` → 关注项目，
-  `today.byModel` → token 流向
+## 已评估但本轮不采纳（P2-2 / P2-3）
 
-## 待接入清单（TODO）
+### DSH 原生组件复用（P2-2）
 
-1. **快照 → UI 数据映射**：本包 `src/bridge/snapshot.ts` 已含 `Snapshot` 类型与 `fetchSnapshot()`；
-   剩余工作是把它映射进 `useMarketEngine` 的数据模型（`minuteSeries`→分时成交、
-   `daySeries`→日K、`workspaces`→关注项目、`today.byModel`→token流向），成功后
-   LiveProvider 切换真实数据、隐藏 demo 徽标。
-2. **左栏入口**：`Rail` 的「技能 / 插件 / 设置」已接入终端内面板：
-   - 技能：通过 `connection.api.skills.list` 拉取目录，点击把 `/name ` 写入 composer；
-   - 插件：通过 `remote.pluginInventory.list` 展示 Loader 清单；
-   - 设置：通过 `connection.api.settings.openDocument` 在系统默认应用中打开设置文档。
-3. **轨迹流**：在 `LiveProvider.onTrajectory` 中订阅 `window.__DSH_BOOT__` 暴露的 session 事件总线，
-   把 `think` / `tool_call`（read/bash/skill/edit 类工具）映射为 `TrajectoryEvent`，替换 `ChatPanel` 里的静态 `INITIAL_STEPS`。
-4. **最近变更 / git tree**：接入 DSH 的 git 事件（当前会话总线没有对应事件，插件侧也未采集），
-   替换 `genChanges` / `genGitTree`；token流向已由插件 `today.byModel` 提供。
-5. **组件复用**（README 已列的 DSH 现成组件）：
-   - 对话区可换 `@deepseek-ai/dsh-client-ui-conversation` / `ui-trajectory`
-   - 终端风格块可换 `ui-primitives` 的 `TerminalBlock` / `CodeBlock` / `ReadBlock` / `DiffBlock`
-   - 品牌与横幅可换 `BrandWordmark` / `FishLogo` / `ConnectionBanner`
-   替换时保持本目录契约不变，只换实现层。
+- 候选：`ui-conversation` / `ui-trajectory` / `ui-primitives` 的 TerminalBlock 等。
+- 不采纳原因：本包部署 profile 为接管 `root` 槽而禁用了默认 `ui-layout` / `ui-conversation` /
+  `ui-trajectory` 等条目；重新引入会带来槽位/样式/inject 面的连锁改动，且这些包不在
+  client-plugin 的运行时模块表里（引入即破坏 smoke 的“无值级 DSH import”约束）。
+- 结论：保持现有精简自绘实现，contract 不变；若后续官方把 primitives 做成无副作用独立包，再评估替换。
+
+### 内嵌 DSH 设置面板（P2-3）
+
+- 当前“设置”面板走 `connection.api.settings.openDocument`，用系统默认应用打开真实设置文档，
+  是可用的真实入口而非占位。
+- 不采纳原因：`ui-settings` / `ui-settings-general` 等条目在本 profile 中已禁用（原因同 P2-2），
+  重新启用需要恢复设置面板的完整 slot 链；收益有限。
+- 结论：保留“打开设置文档”行为；未来可在 `TerminalPanel` 内增加只读设置摘要（模型/权限默认值），
+  但仍以真实 DSH 设置文档为唯一编辑入口。

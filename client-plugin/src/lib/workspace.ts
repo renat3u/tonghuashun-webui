@@ -58,3 +58,16 @@ export function buildWorkspaceRows(
     }
   })
 }
+
+/**
+ * 把 meter git 数据的相对路径拼回工作区绝对路径。
+ * 兼容 POSIX 与 Windows 分隔符；`rel` 为绝对路径时原样返回。
+ */
+export function joinWorkspacePath(cwd: string, rel: string): string {
+  if (rel.length === 0) return cwd
+  if (rel.startsWith('/') || /^[A-Za-z]:[\\/]/.test(rel)) return rel
+  const sep = cwd.includes('\\') && !cwd.includes('/') ? '\\' : '/'
+  const base = cwd.replace(/[\\/]+$/, '')
+  const child = rel.replace(/^[\\/]+/, '')
+  return `${base}${sep}${child}`
+}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './icons'
 import { AsciiWelcome } from './AsciiWelcome'
 import type { ConvMessage, Segment, TrajStep } from '../data/trajectory'
-import type { QueuedMessageLike, QueueActionLike } from '../contract'
+import type { PermissionSelectLike, QueuedMessageLike, QueueActionLike } from '../contract'
 
 type Tab = 'conv' | 'traj' | 'cp' | 'queue'
 
@@ -12,8 +12,6 @@ export interface CheckpointItem {
   time: number
   summary: string | null
 }
-
-const PERMISSION_PRESETS = ['workspace-write', 'danger-full-access'] as const
 
 const TAG_LABEL: Record<TrajStep['tag'], { text: string; cls: string }> = {
   think: { text: '◆ Think', cls: 'think' },
@@ -84,6 +82,8 @@ export interface TerminalChatProps {
   model: string | null
   /** 真实快照中的模型列表（模型切换弹层建议）。 */
   modelOptions?: readonly string[]
+  /** 当前权限预设投影（真实 DSH 提供；缺失显示“未知”）。 */
+  permission?: PermissionSelectLike
   /** 客户端版本。 */
   version: string
   /** 真实消息流（会话节点映射）。 */
@@ -118,18 +118,32 @@ export interface TerminalChatProps {
 
 /** 纯表现组件：对话 / Trajectory / 检查点三页签 + composer。数据全部来自 props。 */
 export function TerminalChat(props: TerminalChatProps) {
-  const { selectedName, directory, sessionId, model, modelOptions, version, messages, steps, checkpoints = [], queue = [], running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onUpdateQueue, onDismissError } = props
+  const { selectedName, directory, sessionId, model, modelOptions, permission, version, messages, steps, checkpoints = [], queue = [], running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onUpdateQueue, onDismissError } = props
   const [tab, setTab] = useState<Tab>('conv')
   const [openSteps, setOpenSteps] = useState<ReadonlySet<number>>(() => new Set())
   const [draft, setDraft] = useState('')
   const [modelOpen, setModelOpen] = useState(false)
   const [modelDraft, setModelDraft] = useState(model ?? '')
   const [permOpen, setPermOpen] = useState(false)
-  const [permDraft, setPermDraft] = useState('workspace-write')
+  const [permDraft, setPermDraft] = useState('')
+  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
+
+  const permOptions = useMemo(
+    () => (permission?.options ?? []).filter((option) => option.value !== 'custom'),
+    [permission],
+  )
+  const permCurrent = permission?.currentValue
+
+  // 附件提示自动消失
+  useEffect(() => {
+    if (attachmentNotice === null) return
+    const timer = setTimeout(() => setAttachmentNotice(null), 3600)
+    return () => clearTimeout(timer)
+  }, [attachmentNotice])
 
   // Esc 全局关闭弹层
   useEffect(() => {
@@ -197,8 +211,10 @@ export function TerminalChat(props: TerminalChatProps) {
     if (file === undefined) return
     if (file.type.startsWith('image/')) {
       setAttachedFiles((prev) => [...prev, file])
+      setAttachmentNotice(null)
     } else {
-      setDraft((prev) => (prev.length > 0 ? `${prev} ` : '') + `@file:${file.name}`)
+      // DSH prompt 内容块当前只支持 text + image；非图片不上传、也不伪装成 @file 附件。
+      setAttachmentNotice(`当前仅支持图片附件：已忽略 ${file.name || '所选文件'}`)
     }
     e.target.value = ''
   }
@@ -380,11 +396,17 @@ export function TerminalChat(props: TerminalChatProps) {
               ))}
             </div>
           )}
+          {attachmentNotice !== null && (
+            <div className="attachment-notice">
+              <Icon name="x" size={10} />
+              {attachmentNotice}
+            </div>
+          )}
           <div className="row">
-            <button className="plus" title="添加图片附件或 @file 标记" onClick={() => fileRef.current?.click()}>
+            <button className="plus" title="添加图片附件（当前仅支持图片）" onClick={() => fileRef.current?.click()}>
               <Icon name="plus" size={11} />
             </button>
-            <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={onPickFile} />
+            <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickFile} />
             <button className="access" title="新建会话" onClick={onNewSession}>
               <span className="lock">
                 <Icon name="zap" size={10} />
@@ -395,16 +417,20 @@ export function TerminalChat(props: TerminalChatProps) {
             <div className="model-select">
               <button
                 className="model-static"
-                title="切换权限模式"
-                onClick={() => setPermOpen((o) => !o)}
+                title={permission === undefined ? '切换权限模式（当前环境未提供权限投影）' : `切换权限模式（当前：${permCurrent ?? 'custom'}）`}
+                onClick={() => {
+                  setPermDraft(permCurrent ?? permDraft)
+                  setPermOpen((o) => !o)
+                }}
               >
-                权限
+                <span className="perm-label">权限</span>
+                <span className={`perm-current${permCurrent === undefined ? ' unknown' : ''}`}>{permCurrent ?? '未知'}</span>
               </button>
               {permOpen && (
                 <div className="model-pop">
                   <input
                     value={permDraft}
-                    placeholder="如 workspace-write"
+                    placeholder={permCurrent ?? '如 workspace-write'}
                     onChange={(e) => setPermDraft(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -413,20 +439,27 @@ export function TerminalChat(props: TerminalChatProps) {
                       }
                     }}
                   />
-                  <div className="model-list">
-                    {PERMISSION_PRESETS.map((name) => (
-                      <button
-                        key={name}
-                        className={name === permDraft ? 'sel' : undefined}
-                        onClick={() => {
-                          setPermDraft(name)
-                          void submitPermission()
-                        }}
-                      >
-                        {name}
-                      </button>
-                    ))}
-                  </div>
+                  {permOptions.length > 0 ? (
+                    <div className="model-list">
+                      {permOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          title={option.description}
+                          className={option.value === permCurrent ? 'sel' : undefined}
+                          onClick={() => {
+                            setPermDraft(option.value)
+                            void submitPermission()
+                          }}
+                        >
+                          {option.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="step-zh" style={{ padding: '4px 6px', color: 'var(--faint)', fontSize: 10.5 }}>
+                      当前环境未提供权限预设投影；仍可手动输入并执行 /permission 命令。
+                    </div>
+                  )}
                   <button onClick={() => void submitPermission()}>切换</button>
                 </div>
               )}

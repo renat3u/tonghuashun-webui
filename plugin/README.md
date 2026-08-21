@@ -75,13 +75,30 @@ npm run backfill
   },
   "minuteSeries": [{ "minute": "00:07", "tokens": 982550, "inputTokens": 2508, "outputTokens": 3052 }],
   "daySeries":    [{ "date": "2026-08-13", "tokens": 39736102, "…": "…" }],
-  "workspaces":   [{ "cwd": "/work/example", "tokens": 41123992, "sessions": 1, "toolCalls": 298 }],
+  "workspaces":   [{
+    "cwd": "/work/example", "tokens": 41123992, "sessions": 1, "toolCalls": 298,
+    "changes":  [{ "ts": 1786518693500, "time": "14:32", "path": "src/lib/a.ts", "msg": "feat", "add": 12, "del": 3, "diff": "@@ …" }],
+    "gitTree":  [{ "depth": 0, "path": "src/", "add": 12, "del": 3, "directory": true }],
+    "locSeries":[ { "date": "2026-08-13", "added": 120, "deleted": 30, "net": 90 } ]
+  }],
   "models":       [{ "model": "example-model", "tokens": 41123992 }]
 }
 ```
 
 与前端视图的映射：`minuteSeries` → 分时成交（每分钟 Token 消耗），`daySeries` → 日 K，
-`workspaces` → 左栏关注项目，`today.byModel` → token 流向。
+`workspaces` → 左栏关注项目，`today.byModel` → token 流向；
+`workspaces[].changes` → 最近变更，`workspaces[].gitTree` → git tree，
+`workspaces[].locSeries` → K 线子图的代码量柱。
+
+## git 采集（最近变更 / git tree / LOC）
+
+- 插件直接对快照中的每个工作区执行 `git log / git show`（argv 调用，不经过 shell），
+  读取最近提交、HEAD 文件树与近 180 天按日净增删行数；
+- 结果按工作区缓存 30 秒；会话总线上出现文件修改类工具调用（edit/write/str_replace_editor 等）
+  时使对应工作区缓存失效；
+- 非 git 仓库 / git 不可用时对应字段**缺省**，前端显示空态，不伪造数据；
+- 前若干条变更附带截断的真实 unified diff（单条上限约 2600 字符），供详情弹窗展示；
+- 所有路径只经 `/tonghuashun/snapshot` 在本机回路内返回，不写仓库、不落 usage/days 文件。
 
 ## 采集语义（重要边界）
 
@@ -93,7 +110,7 @@ npm run backfill
 
 ## 开发
 
-- `npm run build` / `npm test`（17 例，node:test）/ `npm run smoke:real-session`（解码
+- `npm run build` / `npm test`（25 例，node:test，含 git 解析与真实临时仓库集成）/ `npm run smoke:real-session`（解码
   `$DSH_HOME/sessions/**/session.jsonl.zstd` 真实日志跑完整折叠，默认取最大会话，可传路径）；
 - 构建对 `@deepseek-ai/cordis` 的类型解析走 `tsconfig.json` 的 `paths` → 本机 DSH checkout 的
   `vendor/cordis/lib/types/index.d.ts`（TS ≥ 5.7 + `moduleResolution: bundler`，
@@ -102,7 +119,8 @@ npm run backfill
 
 ## Known Limitations and Deferred Work
 
-- 尚未实现 client 半（slots 注册挂载终端 UI）——前端目前独立运行，经 `/tonghuashun/snapshot` 取数；
-- 「最近变更 / git tree」需要 git 事件源，当前 DSH 会话总线没有对应事件，暂未采集；
+- 尚未实现 client 半（slots 注册挂载终端 UI）——终端 UI 由 `client-plugin` 包独立提供；
+- 最近变更 / git tree 直接读取工作区 git 仓库；DSH 会话总线仍无 git 事件，
+  未提交工作区的改动要等 commit 后才会出现在变更列表；
 - 历史回填已通过 `npm run backfill` 提供：显式、本地执行，只输出聚合计数，不写入仓库；
 - days.json 全量重写（防抖 200ms），文件规模远大于内存场景（百万级天记录）前无需分段。

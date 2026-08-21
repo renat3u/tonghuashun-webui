@@ -26,14 +26,14 @@ npm run typecheck  # 仅类型检查
 
 | 区域 | 组件 | 说明 |
 | --- | --- | --- |
-| 顶部红色标题栏 | `TopBar` | 指数条（总代码量 / 活跃会话 / Token 消耗）+ 搜索框（工作区/代码检索并跳转） |
-| 左栏 | `Rail` | deepseek 字标 + HARNESS PRO 徽章；导航仅保留 **对话（主界面）/ 技能 / 插件 / 设置** 四个 DSH 入口（后三个为插件注入后的集成点）；**关注项目**列表 = 各工作区，显示 Token 消耗量与涨跌幅，点击切换 |
-| 中栏上 | `ChatPanel` | 对话 / Trajectory / 检查点 三个页签；ASCII 欢迎横幅、agent 轨迹（Think/Read/Bash/Skill/Edit，可展开详情）、消息气泡、仓库/分支 chip、消息输入框（模型切换、权限模式） |
-| 中栏下 | `KLineChart` | Canvas 自绘 K 线：分时 / 5日 / 日K / 周K / 月K；**主图 = Token 消耗量**（MA5/10/20），子图 = 代码变更量（红=增行，绿=删行，GitHub 风格，VOL(5,10)）；十字光标 + OHLC 信息条；重构日大红烛呼吸光晕 + 子图绿柱「一砸到底」标注；**高度可拖动调节**（聊天区与图表之间的分隔条，双击复位，位置本地记忆） |
-| 右栏 | `QuotePanel` | 行情详情（今日 Token 消耗 / 环比、最高/今开/最低/昨收、提交量、代码量、变更率、上下文 TTM、总Token、会话数）；三个页签：**最近变更**（最近几次代码修改，红增绿删，GitHub 风格）/ **git tree**（最近提交文件树）/ **token流向**（最近几次 Token 被哪些项目消耗）；**分时成交 = 最近几分钟的每分钟 Token 消耗**（滚动刷新） |
-| 底部状态栏 | `StatusBar` | DSH指数（今日 Token 消耗）/ 会话 / 插件三大指数实时跳动、时钟、连接状态 |
+| 顶部红色标题栏 | `TopBar` | 指数条（DSH 指数 / 今日消耗 / 活跃工作区）+ 搜索框（工作区 / 会话 / 模型 / 文件索引检索并跳转） |
+| 左栏 | `Rail` | deepseek 字标；导航仅保留 **对话（主界面）/ 技能 / 插件 / 设置** 四个 DSH 入口（后三个为插件注入后的集成点）；**关注项目**列表 = 各工作区，显示 Token 消耗量与涨跌幅，点击切换 |
+| 中栏上 | `ChatPanel` | 对话 / Trajectory / 检查点 / 队列四个页签；ASCII 欢迎横幅、真实会话节点映射的轨迹、消息气泡、消息输入框（模型切换、真实权限当前值） |
+| 中栏下 | `KLineChart` | Canvas 自绘 K 线：分时 / 5日 / 日K / 周K / 月K；**主图 = Token 消耗量**（MA5/10/20），子图 = 代码变更量（live 模式来自真实 git locSeries，红=增行，绿=删行）；十字光标 + OHLC 信息条；**高度可拖动调节**（分隔条拖动，双击复位，位置本地记忆） |
+| 右栏 | `QuotePanel` | 行情详情（今日 Token 消耗 / 环比、最高/今开/最低/昨收、提交量、代码量、变更率、上下文 TTM、总Token、会话数）；页签：**最近变更**（live 模式 = meter 采集的工作区 git log，红增绿删）/ **git tree**（HEAD 提交文件树）/ **token流向** / **盘口**；详情弹窗展示真实 diff 摘要；**分时成交 = 每分钟 Token 消耗** |
+| 底部状态栏 | `StatusBar` | DSH指数（今日 Token 消耗）/ 会话 / 插件三大指数、时钟、连接状态 |
 
-全部数据为**客户端实时模拟**（确定性种子 + 心跳引擎）：每分钟 Token 消耗每 ~12s 新增一笔、最近变更偶发新提交、token 流向抖动、指数随机游走、时钟走秒。
+**独立运行**（`npm run dev`）时为确定性模拟行情；**嵌入 DSH** 后 token 行情、K 线、最近变更、git tree、权限、文件搜索全部来自真实数据，拿不到真实数据的面板显示明确空态，不回退模拟。
 
 ## 代码结构
 
@@ -73,16 +73,18 @@ tests/                         # node:test 单元测试（数据层）
 
 ## 与 DSH 的集成路径（插件注入）
 
-1. **独立运行**：当前模式，行情与轨迹全部本地模拟，右下角有 `demo · mock market` 徽标。
-2. **数据插件**：`plugin/` 是 bundle 形态的 **dsh-tonghuashun-meter**——`pnpm dsh plugin --profile web add` 挂载后
-   （20260812 快照起官方加载方式是 dsh 仓库根目录源码启动 `pnpm dsh`），
+1. **独立运行**：`npm run dev` 模式，行情与轨迹全部本地模拟，右下角有 `demo · mock market` 徽标。
+2. **数据插件**：`plugin/` 是 bundle 形态的 **dsh-tonghuashun-meter**——挂载后
+   （官方加载方式是 dsh 仓库根目录源码启动 `pnpm dsh`），
    实时收集/记录每个会话的 Token 消耗与工具调用（`$DSH_HOME/tonghuashun/usage.jsonl` + `days.json`），
-   并在 web 组合暴露 `GET /tonghuashun/snapshot`；前端 `client-plugin/src/bridge/snapshot.ts` 已含契约与 fetch 探针。
+   读取工作区 git 提交/文件树/LOC，并在 web 组合暴露 `GET /tonghuashun/snapshot`；
+   前端 `client-plugin/src/bridge/snapshot.ts` 已含契约与 fetch 探针。
 3. **终端界面插件**：`client-plugin/` 是 **@deepseek-ai/dsh-client-tonghuashun**（bundle + `dsh.client`），
    浏览器半注册 'root' 槽替换默认界面；安装 = `pnpm dsh plugin --profile web add "<repo>/client-plugin"`
    + 叠加 `deploy/web-terminal.patch.yml` 禁用默认 web UI 行（'root' 是 single 槽，先到先得）。
-   轨迹流 / 快照→UI 映射 / 左栏三个 DSH 入口的接入点已预留（TODO 见 `client-plugin/src/bridge/README.md`）。
-4. **组件复用**：DSH SDK 中可替换的现成组件（`ui-conversation` / `ui-trajectory` / `ui-primitives` 的 `TerminalBlock`、`CodeBlock`、`BrandWordmark` 等）见 bridge README；左栏「技能 / 插件 / 设置」三个入口将打开对应 DSH 窗口。
+   会话/Trajectory/队列、快照→UI 映射、权限投影、文件索引搜索均已接入，详见 `client-plugin/src/bridge/README.md`。
+4. **组件复用**：DSH SDK 中可替换的现成组件（`ui-conversation` / `ui-trajectory` / `ui-primitives`）已评估，
+   本 profile 因接管 root 槽而禁用默认 UI 行，本轮保持自绘实现（见 bridge README）。
 
 > 历史回填、数据本地保存方式与隐私边界见根目录 **`AGENT.md`**；meter 插件的回填命令为
 > `cd plugin && npm run backfill`。

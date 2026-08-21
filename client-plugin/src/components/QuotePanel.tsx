@@ -3,6 +3,7 @@ import { fmt, fmtToken, fmtPct, dirClass } from '../lib/format'
 import type { ChangeRow, FlowRow, Instrument, TapeRow, TreeRow } from '../lib/market'
 import type { MarketEngine } from '../lib/useMarketEngine'
 import type { SnapshotModelDetail } from '../bridge/snapshot'
+import { joinWorkspacePath } from '../lib/workspace'
 import { Icon } from './icons'
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
   gitTree: TreeRow[]
   pinned: boolean
   onTogglePin: () => void
+  /** 当前选中工作区 cwd（真实 git 路径为相对路径时用于拼出绝对路径）。 */
+  workspaceCwd?: string
   /** 用系统默认应用打开路径（变更/文件树行点击）。 */
   openPath?: (path: string) => Promise<void>
   /** 盘口/会话状态数据。 */
@@ -49,16 +52,20 @@ interface Props {
 
 type PanelTab = 'changes' | 'tree' | 'flow' | 'depth'
 
-export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, openPath, depth, modelDetail }: Props) {
+export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTree, pinned, onTogglePin, workspaceCwd, openPath, depth, modelDetail }: Props) {
   const [tab, setTab] = useState<PanelTab>('changes')
   const [hideTape, setHideTape] = useState(false)
-  const [detail, setDetail] = useState<{ title: string; lines: ReadonlyArray<readonly [string, string]>; path?: string } | null>(null)
+  const [detail, setDetail] = useState<{ title: string; lines: ReadonlyArray<readonly [string, string]>; path?: string; diff?: string } | null>(null)
   const q = engine.quotes.get(instrument.code)
   const last = q?.last ?? instrument.last
   const pct = q?.pct ?? instrument.pct
   const change = q?.change ?? instrument.change
   const down = change < 0
   const cls = dirClass(pct)
+  /** 真实 git 路径为相对路径时，拼回工作区绝对路径。 */
+  const resolvePath = (path: string): string => workspaceCwd !== undefined
+    ? joinWorkspacePath(workspaceCwd, path)
+    : path
 
   return (
     <aside className="quote">
@@ -213,13 +220,18 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
 
       {tab === 'changes' && (
         <div className="changes">
+          {changes.length === 0 && (
+            <div className="step-zh" style={{ padding: '8px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
+              {engine.live ? '暂无真实变更数据：当前工作区未采集到 git 提交（或无 meter git 数据）。' : '暂无变更数据。'}
+            </div>
+          )}
           {changes.map((c, i) => (
             <div
-              key={`${c.time}-${i}`}
+              key={`${c.time}-${c.path}-${i}`}
               className="change-row"
               style={openPath && c.path ? { cursor: 'pointer' } : undefined}
               onClick={() => {
-                if (openPath && c.path) void openPath(c.path)
+                if (openPath && c.path) void openPath(resolvePath(c.path))
               }}
             >
               <span className="tm">{c.time}</span>
@@ -238,13 +250,15 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
                     e.stopPropagation()
                     setDetail({
                       title: '变更详情',
-                      path: c.path,
+                      path: resolvePath(c.path),
+                      ...(c.diff !== undefined ? { diff: c.diff } : {}),
                       lines: [
                         ['时间', c.time],
                         ['路径', c.path],
                         ['说明', c.msg],
                         ['新增', `+${fmt(c.add)} 行`],
                         ['删除', `-${fmt(c.del)} 行`],
+                        ['diff', c.diff !== undefined ? '下方展示该文件的真实 diff 摘要' : '无 diff 数据（git 不可读或条目超出摘要范围）'],
                       ],
                     })
                   }}
@@ -255,24 +269,31 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
             </div>
           ))}
           <div className="step-zh" style={{ padding: '4px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
-            最近几次代码修改：红 = 增加内容，绿 = 减少内容
+            {engine.live
+              ? '来自工作区 git log（meter 采集），无数据时不再回退模拟。红 = 增加内容，绿 = 减少内容'
+              : '最近几次代码修改：红 = 增加内容，绿 = 减少内容'}
           </div>
         </div>
       )}
 
       {tab === 'tree' && (
         <div className="changes">
+          {gitTree.length === 0 && (
+            <div className="step-zh" style={{ padding: '8px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
+              {engine.live ? '暂无真实 git tree：当前工作区没有可用提交或 git 数据。' : '暂无文件树数据。'}
+            </div>
+          )}
           {gitTree.map((t, i) => (
             <div
               key={`${t.path}-${i}`}
               className="tree-row"
               style={{ paddingLeft: 14 + t.depth * 14, ...(openPath && t.path ? { cursor: 'pointer' } : {}) }}
               onClick={() => {
-                if (openPath && t.path) void openPath(t.path)
+                if (openPath && t.path) void openPath(resolvePath(t.path))
               }}
             >
               <span className="path">
-                {t.depth > 0 ? '└ ' : '▸ '}
+                {t.directory === true ? '▸ ' : t.depth > 0 ? '└ ' : '▸ '}
                 {t.path}
               </span>
               <span className="delta">
@@ -290,12 +311,14 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
                     e.stopPropagation()
                     setDetail({
                       title: '提交详情',
-                      path: t.path,
+                      path: resolvePath(t.path),
                       lines: [
                         ['路径', t.path],
+                        ['类型', t.directory === true ? '目录（聚合行）' : '文件'],
                         ['层级', String(t.depth)],
                         ['新增', t.add > 0 ? `+${fmt(t.add)} 行` : '—'],
                         ['删除', t.del > 0 ? `-${fmt(t.del)} 行` : '—'],
+                        ['diff', '文件树条目不附带 diff 正文'],
                       ],
                     })
                   }}
@@ -306,7 +329,7 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
             </div>
           ))}
           <div className="step-zh" style={{ padding: '4px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
-            最近一次提交的文件树
+            {engine.live ? '最近一次提交的文件树（真实 git HEAD）' : '最近一次提交的文件树'}
           </div>
         </div>
       )}
@@ -391,6 +414,9 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
                   <span className="v">{v}</span>
                 </div>
               ))}
+              {detail.diff !== undefined && (
+                <pre className="diff-body">{detail.diff}</pre>
+              )}
               <div className="queue-actions" style={{ marginTop: 10 }}>
                 {detail.path !== undefined && openPath !== undefined && (
                   <button className="cp-action" onClick={() => { setDetail(null); void openPath(detail.path as string) }}>

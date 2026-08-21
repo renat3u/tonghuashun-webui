@@ -12,7 +12,18 @@
  *  - send/cancel/newSession 回调在 inject 工厂里闭包 apply ctx（sessions /
  *    workspaces 服务），组件永不接触 ctx。
  */
-import type { ChatOps, ClientContext, PluginEntryLike, PromptPart, RootOps, SessionFaceLike, SkillEntryLike } from '../contract.js'
+import type {
+  ChatOps,
+  ClientContext,
+  FileReferenceCandidateLike,
+  ObservableSnapshotLike,
+  PermissionSelectLike,
+  PluginEntryLike,
+  PromptPart,
+  RootOps,
+  SessionFaceLike,
+  SkillEntryLike,
+} from '../contract.js'
 import { registerThsConversation, type ConversationRegistriesLike } from '../conversation/nodes.js'
 import { TERMINAL_CSS } from './styles.generated.js'
 import { TerminalRoot } from './TerminalRoot.js'
@@ -35,6 +46,33 @@ function currentSessionId(ctx: ClientContext): string | undefined {
 function sessionFaceOf(ctx: ClientContext, boundSessionId: string | undefined): SessionFaceLike | undefined {
   const id = boundSessionId ?? currentSessionId(ctx)
   return id !== undefined ? ctx.sessions.binding(id)?.session : undefined
+}
+
+/** 当前会话的 permissions 投影读面（缺失 = 环境未提供权限服务）。 */
+function permissionFaceOf(ctx: ClientContext, boundSessionId: string | undefined): ObservableSnapshotLike<unknown> | undefined {
+  return sessionFaceOf(ctx, boundSessionId)?.projections?.faceOf('permissions')
+}
+
+/** 防御式读取投影值为 PermissionSelectLike；结构不合法返回 undefined。 */
+function permissionSelectOf(ctx: ClientContext, boundSessionId: string | undefined): PermissionSelectLike | undefined {
+  const value = permissionFaceOf(ctx, boundSessionId)?.getSnapshot()
+  if (value === null || typeof value !== 'object') return undefined
+  const candidate = value as { currentValue?: unknown; options?: unknown }
+  if (typeof candidate.currentValue !== 'string') return undefined
+  const options: { value: string; name: string; description?: string }[] = []
+  if (Array.isArray(candidate.options)) {
+    for (const raw of candidate.options) {
+      if (raw === null || typeof raw !== 'object') continue
+      const option = raw as { value?: unknown; name?: unknown; description?: unknown }
+      if (typeof option.value !== 'string' || typeof option.name !== 'string') continue
+      options.push({
+        value: option.value,
+        name: option.name,
+        ...(typeof option.description === 'string' ? { description: option.description } : {}),
+      })
+    }
+  }
+  return { options, currentValue: candidate.currentValue }
 }
 
 /**
@@ -108,6 +146,12 @@ function makeChatOps(ctx: ClientContext, boundSessionId: string | undefined): Ch
       const result = await face.updateQueue(itemId, action)
       return result.ok
     },
+    permissionSelect() {
+      return permissionSelectOf(ctx, boundSessionId)
+    },
+    subscribePermission(fn) {
+      return permissionFaceOf(ctx, boundSessionId)?.subscribe(fn) ?? (() => {})
+    },
   }
 }
 
@@ -129,10 +173,18 @@ interface ConnectionHandleLike {
   }
 }
 
-/** DSH remote 服务的最小结构（pluginInventory RPC）。 */
+/** DSH remote 服务的最小结构（pluginInventory / fileReferences RPC）。 */
 interface RemoteLike {
   pluginInventory?: {
     list(): Promise<{ ok: boolean; value?: { entries: readonly PluginEntryLike[] }; error?: unknown }>
+  }
+  /** 主机文件索引（dsh-file-reference remote 面）；profile 未装配时缺省。 */
+  fileReferences?: {
+    list(
+      agentId: string,
+      query: string,
+      signal?: AbortSignal,
+    ): Promise<{ ok: boolean; value?: readonly FileReferenceCandidateLike[]; error?: unknown }>
   }
 }
 
@@ -177,6 +229,27 @@ function makeRootOps(ctx: ClientContext): RootOps {
       if (open === undefined) return false
       const result = await open({}, new AbortController().signal)
       return result.ok
+    },
+    async searchWorkspaceFiles(query, signal) {
+      const sessionId = currentSessionId(ctx)
+      if (sessionId === undefined) return null
+      let remote: RemoteLike | undefined
+      try {
+        remote = ctx.get?.('remote') as RemoteLike | undefined
+      } catch {
+        return null
+      }
+      // remote 是 cordis 代理：未注册的命名空间 getter 可能抛错（如 profile 禁用了
+      // ui-reference），所以 namespace 访问本身也要防御，而不是只判 undefined。
+      let list: ((agentId: string, query: string, signal?: AbortSignal) => Promise<{ ok: boolean; value?: readonly FileReferenceCandidateLike[]; error?: unknown }>) | undefined
+      try {
+        list = remote?.fileReferences?.list
+      } catch {
+        return null
+      }
+      if (list === undefined) return null
+      const result = await list(sessionId, query, signal)
+      return result.ok ? (result.value ?? []) : null
     },
   }
 }

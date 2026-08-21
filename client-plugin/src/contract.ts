@@ -207,6 +207,17 @@ export interface ConversationSnapshotLike {
   queue?: readonly QueuedMessageLike[]
 }
 
+/** 权限预设投影值（dsh PermissionSelect 的结构子集）。 */
+export interface PermissionSelectLike {
+  options: readonly { value: string; name: string; description?: string }[]
+  currentValue: string
+}
+
+/** 会话投影读面（dsh ProjectionsFace 的结构子集）。 */
+export interface ProjectionsFaceLike {
+  faceOf(key: string): ObservableSnapshotLike<unknown>
+}
+
 /** 会话行为面（dsh SessionFace 的结构子集）。 */
 export interface SessionFaceLike {
   sessionId: string
@@ -214,6 +225,8 @@ export interface SessionFaceLike {
   cancel(): Promise<RpcResultLike>
   command(line: string): Promise<RpcResultLike>
   updateQueue?(itemId: string, action: QueueActionLike): Promise<RpcResultLike>
+  /** 键寻址投影（permissions 等）；真实 DSH 运行时提供。 */
+  projections?: ProjectionsFaceLike
   getSnapshot(): ConversationSnapshotLike
   subscribe(fn: () => void): () => void
 }
@@ -327,6 +340,10 @@ export interface ChatOps {
   command(line: string): Promise<boolean>
   /** 对 pending queue 做编辑/移除/steer。 */
   updateQueue?(itemId: string, action: QueueActionLike): Promise<boolean>
+  /** 读取当前会话的权限预设投影（无投影服务时为 undefined）。 */
+  permissionSelect?(): PermissionSelectLike | undefined
+  /** 订阅当前会话权限投影变化；返回取消订阅函数。 */
+  subscribePermission?(fn: () => void): () => void
 }
 
 /** 左侧导航可打开的终端内面板。 */
@@ -348,6 +365,13 @@ export interface PluginEntryLike {
   fiberPhase?: string | null
 }
 
+/** 文件索引候选（dsh FileReferenceCandidate 的结构子集）。 */
+export interface FileReferenceCandidateLike {
+  /** 相对当前会话工作区的路径。 */
+  path: string
+  kind: 'file' | 'directory'
+}
+
 /** root 注册项的 inject 面。 */
 export interface RootOps {
   /** 打开指定会话。 */
@@ -364,6 +388,11 @@ export interface RootOps {
   listPlugins?(): Promise<readonly PluginEntryLike[]>
   /** 用系统默认应用打开 DSH 设置文档（非 DSH 环境可缺省）。 */
   openSettingsDocument?(): Promise<boolean>
+  /**
+   * 通过 DSH fileReferences 索引搜索当前工作区文件；
+   * 服务不可用时返回 null（独立运行模式）。
+   */
+  searchWorkspaceFiles?(query: string, signal?: AbortSignal): Promise<readonly FileReferenceCandidateLike[] | null>
 }
 
 /** ChatPanel 槽的 owner 面（TerminalRoot 经 renderSlot 下传）。 */

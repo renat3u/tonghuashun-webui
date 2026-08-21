@@ -46,14 +46,14 @@ export function usageTokens(usage: {
  * @param session - the session whose log tail is folded.
  * @param cursor - the previous fold position (start at `{ consumed: 0 }`).
  * @param onRecord - called once per usage-carrying assistant turn.
- * @param onToolCall - called with the event time and session cwd for every `tool/call`.
+ * @param onToolCall - called with the event time, session cwd, and tool name for every `tool/call`.
  * @returns the advanced cursor (the same object passed in).
  */
 export function foldSession(
   session: MeterSession,
   cursor: FoldCursor,
   onRecord: (record: UsageRecord) => void,
-  onToolCall: (ts: number, cwd: string | undefined) => void = () => {},
+  onToolCall: (ts: number, cwd: string | undefined, toolName: string | undefined) => void = () => {},
 ): FoldCursor {
   const events = session.events
   const id = session.header.id
@@ -74,7 +74,8 @@ export function foldSession(
         if (model !== null) cursor.model = model
       }
     } else if (event.type === 'tool/call') {
-      onToolCall(event.time, cwd)
+      const toolName = data === null ? undefined : (str(data.name) ?? undefined)
+      onToolCall(event.time, cwd, toolName)
     } else if (event.type === 'assistant/message' && data !== null) {
       const usage = asRecord(data.usage)
       if (usage !== null) {
