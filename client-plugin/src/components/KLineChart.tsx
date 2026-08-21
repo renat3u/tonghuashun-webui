@@ -369,6 +369,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       setInfoRef.current({ kind: 'candle', date: fmtDateSlash(new Date(k.t)), o: k.o, h: k.h, l: k.l, c: k.c, chg, loc: k.loc })
     } else {
       const n = visibleSeries.points.length
+      if (n === 0) return
       const idx = hover >= 0 && hover < n ? hover : n - 1
       const p = visibleSeries.points[idx]
       const time = visibleSeries.intraday ? fmtTime(p.t % 24) : fmtDateSlash(new Date(p.t))
@@ -945,6 +946,7 @@ interface LineViewOpts {
 
 function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
   const { W, padL, padR, padT, mainH, volTop, volH, plotW, points, intraday, crash, hover, baseMinute, livePrice } = o
+  if (points.length === 0) return
   const n = points.length
   const slot = plotW / n
   const bw = Math.max(1, slot * 0.62)

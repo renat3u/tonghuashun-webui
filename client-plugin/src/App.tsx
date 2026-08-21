@@ -112,14 +112,6 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
   const liveSnapshot = useSnapshotPoller()
   const engine = useMarketEngine(selected, liveSnapshot)
 
-  // live 数据到达且当前选中不在真实工作区列表时，切到第一个工作区
-  useEffect(() => {
-    if (liveSnapshot === null) return
-    if (engine.static.instruments.some((x) => x.code === selected)) return
-    const first = engine.static.instruments[0]
-    if (first !== undefined) setSelected(first.code)
-  }, [liveSnapshot, engine.static, selected])
-
   const sessionState = useSessions((s) => s)
   const currentSummary = sessionState.current !== undefined ? sessionState.byId[sessionState.current] : undefined
   const workspaceState = useWorkspaces((s) => s)
@@ -128,6 +120,17 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     [workspaceState, sessionState, liveSnapshot],
   )
   const hasRealWorkspaces = workspaceRows.length > 0
+
+  // live 数据到达且当前选中不在真实工作区列表时，切到第一个工作区。
+  // 注意：有真实 workspace 时不再与下面的“真实工作区选中同步”打架，
+  // 否则会在 mock 首代码和真实工作区代码之间来回切换，造成界面闪烁。
+  useEffect(() => {
+    if (hasRealWorkspaces) return
+    if (liveSnapshot === null) return
+    if (engine.static.instruments.some((x) => x.code === selected)) return
+    const first = engine.static.instruments[0]
+    if (first !== undefined) setSelected(first.code)
+  }, [hasRealWorkspaces, liveSnapshot, engine.static, selected])
 
   // 有真实工作区时，把选中项切到真实列表；没有真实数据时仍走模拟行情。
   useEffect(() => {
