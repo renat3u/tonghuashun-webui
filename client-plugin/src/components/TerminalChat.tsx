@@ -120,6 +120,16 @@ export function TerminalChat(props: TerminalChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
+  // Esc 全局关闭弹层
+  useEffect(() => {
+    const close = () => {
+      setModelOpen(false)
+      setPermOpen(false)
+    }
+    window.addEventListener('ths:close-popovers', close)
+    return () => window.removeEventListener('ths:close-popovers', close)
+  }, [])
+
   // 内容变化时滚动到底部
   useEffect(() => {
     const el = scrollRef.current

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fmt, fmtPct, dirClass } from '../lib/format'
 import type { MarketEngine } from '../lib/useMarketEngine'
 import type { WorkspaceRow } from '../lib/workspace'
@@ -30,6 +30,15 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, onOpenSessio
   const [selIdx, setSelIdx] = useState(0)
   const [sessOpen, setSessOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const close = () => {
+      setSessOpen(false)
+      setFocused(false)
+    }
+    window.addEventListener('ths:close-popovers', close)
+    return () => window.removeEventListener('ths:close-popovers', close)
+  }, [])
 
   const sessionRows = useMemo(
     () => [...sessions.ids].reverse().map((id) => sessions.byId[id]).filter((row) => row !== undefined),

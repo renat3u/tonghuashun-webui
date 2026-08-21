@@ -203,6 +203,17 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
         if (mode !== undefined) {
           window.dispatchEvent(new CustomEvent('ths:chart-mode', { detail: mode }))
         }
+      } else if (e.key === 'Escape') {
+        if (typing && target !== null) target.blur()
+        window.dispatchEvent(new CustomEvent('ths:close-popovers'))
+      } else if (e.key === 'F11') {
+        e.preventDefault()
+        const el = document.documentElement
+        if (document.fullscreenElement) {
+          void document.exitFullscreen()
+        } else {
+          void el.requestFullscreen()
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)
