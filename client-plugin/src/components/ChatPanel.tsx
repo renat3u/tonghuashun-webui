@@ -53,20 +53,23 @@ export function ChatPanel(props: ChatPanelProps) {
     ? `${promptError.op === 'send' ? '发送失败' : '停止失败'}：${promptError.error.message}`
     : localError
 
-  const onSend = (text: string, files?: readonly File[]) => {
-    if (sending) return
+  /** 发送一条消息；返回是否被接受（false 时 TerminalChat 会回填草稿）。 */
+  const onSend = (text: string, files?: readonly File[]): Promise<boolean> => {
+    if (sending) return Promise.resolve(false)
     setSending(true)
     setLocalError(null)
-    void send(text, 'queue', files).then(
+    return send(text, 'queue', files).then(
       (ok) => {
         setSending(false)
         if (!ok) {
           setLocalError('发送失败：当前没有可用会话（工作区未注册时无法新建会话）。')
         }
+        return ok
       },
       () => {
         setSending(false)
         setLocalError('发送失败：请求被拒绝（详见主机日志）。')
+        return false
       },
     )
   }
@@ -88,6 +91,7 @@ export function ChatPanel(props: ChatPanelProps) {
       partialText={snapshot ? partialTextOf(snapshot) : ''}
       error={error}
       hasSession={sessionId !== undefined}
+      sending={sending}
       permission={permission}
       onSend={onSend}
       onCancel={cancel}

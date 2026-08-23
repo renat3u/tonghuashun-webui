@@ -100,8 +100,13 @@ export interface TerminalChatProps {
   error: string | null
   /** 当前是否有会话（无会话时 composer 提示新建）。 */
   hasSession: boolean
-  /** 发送（Enter / 按钮；可携带图片附件）。 */
-  onSend: (text: string, files?: readonly File[]) => void
+  /** 是否有一条消息正在发送在途（发送按钮禁用，草稿保留不清空）。 */
+  sending?: boolean
+  /**
+   * 发送（Enter / 按钮；可携带图片附件）。
+   * 返回 false 或 reject 表示未被接受：草稿与附件会回填，避免输入丢失。
+   */
+  onSend: (text: string, files?: readonly File[]) => void | boolean | Promise<boolean | void>
   /** 停止当前回合。 */
   onCancel: () => void
   /** 新建会话。 */
@@ -118,7 +123,7 @@ export interface TerminalChatProps {
 
 /** 纯表现组件：对话 / Trajectory / 检查点三页签 + composer。数据全部来自 props。 */
 export function TerminalChat(props: TerminalChatProps) {
-  const { selectedName, directory, sessionId, model, modelOptions, permission, version, messages, steps, checkpoints = [], queue = [], running, partialText, error, hasSession, onSend, onCancel, onNewSession, onCommand, onUpdateQueue, onDismissError } = props
+  const { selectedName, directory, sessionId, model, modelOptions, permission, version, messages, steps, checkpoints = [], queue = [], running, partialText, error, hasSession, sending = false, onSend, onCancel, onNewSession, onCommand, onUpdateQueue, onDismissError } = props
   const [tab, setTab] = useState<Tab>('conv')
   const [openSteps, setOpenSteps] = useState<ReadonlySet<number>>(() => new Set())
   const [draft, setDraft] = useState('')
@@ -126,8 +131,12 @@ export function TerminalChat(props: TerminalChatProps) {
   const [modelDraft, setModelDraft] = useState(model ?? '')
   const [permOpen, setPermOpen] = useState(false)
   const [permDraft, setPermDraft] = useState('')
-  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
+  const [composerNotice, setComposerNotice] = useState<string | null>(null)
+  const [queueNotice, setQueueNotice] = useState<string | null>(null)
+  const [queueEditing, setQueueEditing] = useState<{ id: string; text: string } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** 对话/轨迹滚动容器是否停留在底部附近（决定新内容到达时是否跟随滚动）。 */
+  const atBottomRef = useRef(true)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
@@ -138,12 +147,19 @@ export function TerminalChat(props: TerminalChatProps) {
   )
   const permCurrent = permission?.currentValue
 
-  // 附件提示自动消失
+  // composer 提示自动消失（附件类型 / 命令不可用等）
   useEffect(() => {
-    if (attachmentNotice === null) return
-    const timer = setTimeout(() => setAttachmentNotice(null), 3600)
+    if (composerNotice === null) return
+    const timer = setTimeout(() => setComposerNotice(null), 3600)
     return () => clearTimeout(timer)
-  }, [attachmentNotice])
+  }, [composerNotice])
+
+  // 队列操作结果提示自动消失
+  useEffect(() => {
+    if (queueNotice === null) return
+    const timer = setTimeout(() => setQueueNotice(null), 3600)
+    return () => clearTimeout(timer)
+  }, [queueNotice])
 
   // Esc 全局关闭弹层
   useEffect(() => {
@@ -162,11 +178,40 @@ export function TerminalChat(props: TerminalChatProps) {
     return () => window.removeEventListener('ths:show-trajectory', showTrajectory)
   }, [])
 
-  // 内容变化时滚动到底部
+  // composer 聚焦 / 写入草稿（全局快捷键与技能面板经事件下发，不直接摸 DOM）
   useEffect(() => {
+    const focus = () => taRef.current?.focus()
+    const insert = (event: Event) => {
+      const text = (event as CustomEvent<string>).detail
+      if (typeof text !== 'string') return
+      setDraft(text)
+      taRef.current?.focus()
+    }
+    window.addEventListener('ths:focus-composer', focus)
+    window.addEventListener('ths:insert-composer', insert)
+    return () => {
+      window.removeEventListener('ths:focus-composer', focus)
+      window.removeEventListener('ths:insert-composer', insert)
+    }
+  }, [])
+
+  // 切页签时回到底部并恢复跟随
+  useEffect(() => {
+    atBottomRef.current = true
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages, steps, partialText, tab])
+  }, [tab])
+
+  // 内容变化时仅在用户停留在底部附近才跟随滚动（上翻阅读时不打断）
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [messages, steps, partialText])
+
+  const onScrollBody = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  }
 
   const toggleStep = (id: number) =>
     setOpenSteps((prev) => {
@@ -179,44 +224,98 @@ export function TerminalChat(props: TerminalChatProps) {
   const send = () => {
     const text = draft.trim()
     if (text.length === 0 && attachedFiles.length === 0) return
+    // 在途期间不清空草稿也不发送：按钮已禁用，这里兜底 Enter 路径。
+    if (sending) return
     const files = attachedFiles
+    const restoreText = draft
     setDraft('')
     setAttachedFiles([])
     if (taRef.current) taRef.current.style.height = 'auto'
-    onSend(text, files)
+    const restore = () => {
+      // 仅当用户尚未输入新内容时回填，避免覆盖后续输入。
+      setDraft((cur) => (cur.length === 0 ? restoreText : cur))
+      setAttachedFiles((cur) => (cur.length === 0 ? files : cur))
+    }
+    void Promise.resolve(onSend(text, files)).then(
+      (ok) => {
+        if (ok === false) restore()
+      },
+      () => restore(),
+    )
   }
 
-  const submitModel = async () => {
-    const name = modelDraft.trim()
-    if (name.length === 0 || onCommand === undefined) return
+  /**
+   * 执行 /model 切换。列表点击传显式 name，避免 setState 未落地时
+   * 读到旧草稿（闭包）导致第一次点击提交旧值。
+   */
+  const submitModel = async (name?: string) => {
+    const value = (name ?? modelDraft).trim()
+    if (value.length === 0) return
+    if (onCommand === undefined) {
+      setComposerNotice('当前环境不支持执行命令（演示模式）')
+      return
+    }
     setModelOpen(false)
-    await onCommand(`/model ${name}`)
+    const ok = await onCommand(`/model ${value}`)
+    if (!ok) setComposerNotice(`模型切换失败：/model ${value} 被拒绝`)
   }
 
-  const submitPermission = async () => {
-    const name = permDraft.trim()
-    if (name.length === 0 || onCommand === undefined) return
+  /** 执行 /permission 切换；列表点击传显式 value（理由同上）。 */
+  const submitPermission = async (value?: string) => {
+    const preset = (value ?? permDraft).trim()
+    if (preset.length === 0) return
+    if (onCommand === undefined) {
+      setComposerNotice('当前环境不支持执行命令（演示模式）')
+      return
+    }
     setPermOpen(false)
-    await onCommand(`/permission ${name}`)
+    const ok = await onCommand(`/permission ${preset}`)
+    if (!ok) setComposerNotice(`权限切换失败：/permission ${preset} 被拒绝`)
   }
 
-  const editQueueItem = (item: QueuedMessageLike) => {
-    const text = window.prompt('编辑队列消息', item.text ?? item.preview)
-    if (text === null || onUpdateQueue === undefined) return
-    void onUpdateQueue(item.id, { kind: 'edit', content: [{ type: 'text', text }] })
+  /** 队列操作统一走这里：结果落到队列页提示，失败不再静默。 */
+  const runQueueAction = (itemId: string, action: QueueActionLike, okMessage: string) => {
+    if (onUpdateQueue === undefined) return
+    void Promise.resolve(onUpdateQueue(itemId, action)).then(
+      (ok) => setQueueNotice(ok ? okMessage : '队列操作失败：请求被拒绝'),
+      () => setQueueNotice('队列操作失败：请求异常（详见主机日志）'),
+    )
+  }
+
+  const saveQueueEdit = () => {
+    if (queueEditing === null) return
+    const text = queueEditing.text.trim()
+    if (text.length === 0) {
+      setQueueNotice('编辑内容为空：如需删除请用「移除」')
+      return
+    }
+    runQueueAction(queueEditing.id, { kind: 'edit', content: [{ type: 'text', text }] }, '已保存队列消息')
+    setQueueEditing(null)
+  }
+
+  /** 收纳图片附件；非图片给提示（DSH prompt 内容块当前只支持 text + image）。 */
+  const addFiles = (files: Iterable<File>) => {
+    const accepted: File[] = []
+    const rejected: string[] = []
+    for (const file of files) {
+      if (file.type.startsWith('image/')) accepted.push(file)
+      else rejected.push(file.name || '未命名文件')
+    }
+    if (accepted.length > 0) setAttachedFiles((prev) => [...prev, ...accepted])
+    if (rejected.length > 0) setComposerNotice(`当前仅支持图片附件：已忽略 ${rejected.join('、')}`)
   }
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file === undefined) return
-    if (file.type.startsWith('image/')) {
-      setAttachedFiles((prev) => [...prev, file])
-      setAttachmentNotice(null)
-    } else {
-      // DSH prompt 内容块当前只支持 text + image；非图片不上传、也不伪装成 @file 附件。
-      setAttachmentNotice(`当前仅支持图片附件：已忽略 ${file.name || '所选文件'}`)
-    }
+    addFiles(e.target.files ?? [])
     e.target.value = ''
+  }
+
+  /** 粘贴图片直接进附件。 */
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'))
+    if (images.length === 0) return
+    e.preventDefault()
+    addFiles(images)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -246,7 +345,7 @@ export function TerminalChat(props: TerminalChatProps) {
       </div>
 
       {tab === 'conv' && (
-        <div className="conv" ref={scrollRef}>
+        <div className="conv" ref={scrollRef} onScroll={onScrollBody}>
           <AsciiWelcome directory={directory} sessionId={sessionId ?? '（未连接会话）'} model={model ?? 'DeepSeek'} version={version} />
           {!hasSession && (
             <div className="step-zh" style={{ color: 'var(--faint)' }}>
@@ -264,7 +363,7 @@ export function TerminalChat(props: TerminalChatProps) {
               <span className="avatar">DS</span>
               <div className="bubble">
                 {partialText || (
-                  <span style={{ color: 'var(--faint)' }}>▍思考中\u2026</span>
+                  <span style={{ color: 'var(--faint)' }}>▍思考中…</span>
                 )}
               </div>
             </div>
@@ -273,7 +372,7 @@ export function TerminalChat(props: TerminalChatProps) {
       )}
 
       {tab === 'traj' && (
-        <div className="traj" ref={scrollRef}>
+        <div className="traj" ref={scrollRef} onScroll={onScrollBody}>
           {steps.length === 0 && <div className="step-zh" style={{ color: 'var(--faint)' }}>本会话暂无轨迹事件。</div>}
           {steps.map((s) => (
             <StepLine key={s.id} step={{ ...s, open: openSteps.has(s.id) || s.open === true }} onToggle={toggleStep} />
@@ -316,6 +415,7 @@ export function TerminalChat(props: TerminalChatProps) {
 
       {tab === 'queue' && (
         <div className="checkpoints">
+          {queueNotice !== null && <div className="step-zh queue-notice">{queueNotice}</div>}
           {queue.length === 0 && (
             <div className="step-zh" style={{ color: 'var(--faint)' }}>
               当前会话没有 pending queue。
@@ -323,14 +423,38 @@ export function TerminalChat(props: TerminalChatProps) {
           )}
           {queue.map((item) => (
             <div key={item.id} className="cp-row">
-              <div className="cp-summary">{item.text ?? item.preview}</div>
+              {queueEditing?.id === item.id ? (
+                <div className="queue-edit">
+                  <textarea
+                    autoFocus
+                    rows={3}
+                    value={queueEditing.text}
+                    onChange={(e) => setQueueEditing({ id: item.id, text: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        saveQueueEdit()
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setQueueEditing(null)
+                      }
+                    }}
+                  />
+                  <div className="queue-actions">
+                    <button className="cp-action" onClick={saveQueueEdit}>保存</button>
+                    <button className="cp-action ghost" onClick={() => setQueueEditing(null)}>取消</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="cp-summary">{item.text ?? item.preview}</div>
+              )}
               <div className="queue-actions">
                 <span className="step-zh">状态：{item.placement}</span>
-                {onUpdateQueue !== undefined && (
+                {onUpdateQueue !== undefined && queueEditing?.id !== item.id && (
                   <>
-                    <button className="cp-action" onClick={() => void onUpdateQueue(item.id, { kind: 'steer' })}>立即执行</button>
-                    <button className="cp-action ghost" onClick={() => editQueueItem(item)}>编辑</button>
-                    <button className="cp-action danger" onClick={() => void onUpdateQueue(item.id, { kind: 'remove' })}>移除</button>
+                    <button className="cp-action" onClick={() => runQueueAction(item.id, { kind: 'steer' }, '已提交立即执行')}>立即执行</button>
+                    <button className="cp-action ghost" onClick={() => setQueueEditing({ id: item.id, text: item.text ?? item.preview })}>编辑</button>
+                    <button className="cp-action danger" onClick={() => runQueueAction(item.id, { kind: 'remove' }, '已移除队列消息')}>移除</button>
                   </>
                 )}
               </div>
@@ -340,15 +464,13 @@ export function TerminalChat(props: TerminalChatProps) {
       )}
 
       <div className="chip-row">
-        <span className="chip">
+        <span className="chip" title={sessionId === null ? '未连接会话' : `会话 ${sessionId}`}>
           <Icon name="graph" size={10} />
           dsh-session
-          <Icon name="chevronDown" size={9} />
         </span>
-        <span className="chip">
+        <span className="chip" title="会话工作目录">
           <Icon name="branch" size={10} />
-          main
-          <Icon name="chevronDown" size={9} />
+          {directory}
         </span>
         <span className="chip" title="当前标的">
           <span className="dot" />
@@ -379,6 +501,7 @@ export function TerminalChat(props: TerminalChatProps) {
               el.style.height = `${Math.min(el.scrollHeight, 120)}px`
             }}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
           />
           {attachedFiles.length > 0 && (
             <div className="attachments">
@@ -396,17 +519,17 @@ export function TerminalChat(props: TerminalChatProps) {
               ))}
             </div>
           )}
-          {attachmentNotice !== null && (
+          {composerNotice !== null && (
             <div className="attachment-notice">
               <Icon name="x" size={10} />
-              {attachmentNotice}
+              {composerNotice}
             </div>
           )}
           <div className="row">
-            <button className="plus" title="添加图片附件（当前仅支持图片）" onClick={() => fileRef.current?.click()}>
+            <button className="plus" title="添加图片附件（当前仅支持图片，可多选/粘贴）" onClick={() => fileRef.current?.click()}>
               <Icon name="plus" size={11} />
             </button>
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickFile} />
+            <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onPickFile} />
             <button className="access" title="新建会话" onClick={onNewSession}>
               <span className="lock">
                 <Icon name="zap" size={10} />
@@ -448,7 +571,7 @@ export function TerminalChat(props: TerminalChatProps) {
                           className={option.value === permCurrent ? 'sel' : undefined}
                           onClick={() => {
                             setPermDraft(option.value)
-                            void submitPermission()
+                            void submitPermission(option.value)
                           }}
                         >
                           {option.name}
@@ -464,58 +587,61 @@ export function TerminalChat(props: TerminalChatProps) {
                 </div>
               )}
             </div>
-            {model && (
-              <div className="model-select">
-                <button
-                  className="model-static"
-                  title="切换模型"
-                  onClick={() => {
-                    setModelDraft(model)
-                    setModelOpen((o) => !o)
-                  }}
-                >
-                  {model}
-                </button>
-                {modelOpen && (
-                  <div className="model-pop">
-                    <input
-                      value={modelDraft}
-                      placeholder="模型名，如 deepseek-v4"
-                      onChange={(e) => setModelDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          void submitModel()
-                        }
-                      }}
-                    />
-                    {modelOptions !== undefined && modelOptions.length > 0 && (
-                      <div className="model-list">
-                        {modelOptions.map((name) => (
-                          <button
-                            key={name}
-                            className={name === modelDraft ? 'sel' : undefined}
-                            onClick={() => {
-                              setModelDraft(name)
-                              void submitModel()
-                            }}
-                          >
-                            {name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <button onClick={() => void submitModel()}>切换</button>
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="model-select">
+              <button
+                className="model-static"
+                title={model === null ? '切换模型（当前模型未知）' : '切换模型'}
+                onClick={() => {
+                  setModelDraft(model ?? modelDraft)
+                  setModelOpen((o) => !o)
+                }}
+              >
+                {model ?? '模型'}
+              </button>
+              {modelOpen && (
+                <div className="model-pop">
+                  <input
+                    value={modelDraft}
+                    placeholder="模型名，如 deepseek-v4"
+                    onChange={(e) => setModelDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        void submitModel()
+                      }
+                    }}
+                  />
+                  {modelOptions !== undefined && modelOptions.length > 0 && (
+                    <div className="model-list">
+                      {modelOptions.map((name) => (
+                        <button
+                          key={name}
+                          className={name === modelDraft ? 'sel' : undefined}
+                          onClick={() => {
+                            setModelDraft(name)
+                            void submitModel(name)
+                          }}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={() => void submitModel()}>切换</button>
+                </div>
+              )}
+            </div>
             {running ? (
               <button className="send stop" title="停止当前回合" onClick={onCancel}>
                 <span className="stop-icon" />
               </button>
             ) : (
-              <button className="send" title="发送" disabled={!draft.trim() && attachedFiles.length === 0} onClick={send}>
+              <button
+                className="send"
+                title={sending ? '发送中…' : '发送'}
+                disabled={sending || (!draft.trim() && attachedFiles.length === 0)}
+                onClick={send}
+              >
                 <Icon name="send" size={12} filled />
               </button>
             )}
