@@ -6,6 +6,11 @@
  *  - 5日：近 5 个交易日 10 分钟线
  *  - 日K / 周K / 月K：蜡烛图 + MA5/10/20 + 代码量 VOL(5,10)
  * 十字光标、轴价格标签、OHLC 信息条、重构日标注（大红烛 + 绿柱一砸到底）。
+ *
+ * 技术指标：BOLL 画在主图（上/中/下轨），MACD / KDJ 作为副图（替换代码量
+ * 子图，与真实行情终端的副图切换一致）；指标随当前 K 线周期计算。
+ * 画线工具：v2 格式锚定数据坐标（x = 全序列小数索引，y = 价格），缩放/平移
+ * 后仍贴住数据；历史 v1 格式（绘图区归一化）按旧行为渲染。
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { fmt, fmtToken, fmtPct } from '../lib/format'
@@ -17,6 +22,7 @@ import {
   type IntradayPoint,
 } from '../lib/market'
 import { candleInfoOf, chartEmptyText, lineInfoOf } from '../lib/chart'
+import { useDismissable } from '../lib/useDismissable'
 import { Icon } from './icons'
 
 export type ChartMode = 'intraday' | 'fiveday' | 'daily' | 'weekly' | 'monthly'
@@ -63,11 +69,23 @@ const AXIS = '#7d8698'
 const MA5_C = '#e8c558'
 const MA10_C = '#b06bd6'
 const MA20_C = '#4fc3a1'
+const BOLL_C = '#6c8cff'
+const OVERLAY_C = 'rgba(255,190,80,.85)'
 const MONO = '10px "SF Mono", Consolas, monospace'
+
+/** 绘图区固定内边距（paint 与事件坐标换算共用）。 */
+const PAD_L = 52
+const PAD_R = 12
+const PAD_T = 20
+const PAD_B = 15
 
 type Info =
   | { kind: 'candle'; date: string; o: number; h: number; l: number; c: number; chg: number; loc: number }
   | { kind: 'line'; time: string; p: number; avg: number; vol: number }
+
+type IndicatorKind = 'none' | 'macd' | 'kdj' | 'boll'
+type MenuKind = 'more' | 'overlay' | 'draw' | 'indicator'
+type DrawTool = 'trend' | 'h' | 'v' | 'label'
 
 /** 根据 zoom/pan 计算可见窗口（start/count）。 */
 function visibleWindow(length: number, zoom: number, pan: number): { start: number; count: number } {
@@ -78,14 +96,46 @@ function visibleWindow(length: number, zoom: number, pan: number): { start: numb
   return { start, count }
 }
 
-/** 画线工具的一条线/标注，坐标为绘图区归一化值（0..1）。 */
+/** 按主图可见窗口比例切叠加序列（叠加标的长度可能不同）。 */
+function sliceProportional<T>(arr: readonly T[], start: number, count: number, total: number): readonly T[] {
+  if (arr.length === 0 || total <= 0 || count >= total) return arr
+  const s = Math.floor((start / total) * arr.length)
+  const c = Math.max(1, Math.round((count / total) * arr.length))
+  return arr.slice(s, Math.min(arr.length, s + c))
+}
+
+/**
+ * 画线工具的一条线/标注。
+ * v2：x = 全序列小数索引，y = 价格值，kind 区分趋势/水平/垂直/标注；
+ * v1（无 v 字段的历史存量）：绘图区归一化坐标（0..1），保持旧行为。
+ */
 interface DrawLine {
+  v?: 2
+  kind?: DrawTool
   x1: number
   y1: number
   x2: number
   y2: number
   /** 标注文本；存在时该条绘制为文字标注而不是线段。 */
   label?: string
+}
+
+function isDrawLine(x: unknown): x is DrawLine {
+  if (typeof x !== 'object' || x === null) return false
+  const line = x as DrawLine
+  return typeof line.x1 === 'number' && typeof line.y1 === 'number'
+    && typeof line.x2 === 'number' && typeof line.y2 === 'number'
+}
+
+/** 读取某标的已保存的画线（损坏数据返回空）。 */
+function loadDrawLines(code: string): DrawLine[] {
+  try {
+    const raw = localStorage.getItem(`ths.draw-lines.${code}`)
+    const parsed: unknown = raw === null ? [] : JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter(isDrawLine) : []
+  } catch {
+    return []
+  }
 }
 
 function emaSeries(values: readonly number[], period: number): number[] {
@@ -100,88 +150,160 @@ function emaSeries(values: readonly number[], period: number): number[] {
   return out
 }
 
-function macdOf(closes: readonly number[]): { dif: number; dea: number; hist: number } | null {
-  if (closes.length < 26) return null
+/** MACD 全序列（12,26,9），与蜡烛按索引对齐。 */
+function macdSeries(closes: readonly number[]): { dif: number[]; dea: number[]; hist: number[] } {
   const ema12 = emaSeries(closes, 12)
   const ema26 = emaSeries(closes, 26)
-  const difs = closes.map((_, i) => (ema12[i] ?? 0) - (ema26[i] ?? 0))
-  const deas = emaSeries(difs, 9)
-  const i = closes.length - 1
-  const dif = difs[i] ?? 0
-  const dea = deas[i] ?? 0
-  return { dif, dea, hist: (dif - dea) * 2 }
+  const dif = closes.map((_, i) => (ema12[i] ?? 0) - (ema26[i] ?? 0))
+  const dea = emaSeries(dif, 9)
+  const hist = dif.map((v, i) => (v - (dea[i] ?? 0)) * 2)
+  return { dif, dea, hist }
 }
 
-function kdjOf(candles: readonly Candle[]): { k: number; d: number; j: number } | null {
-  if (candles.length < 9) return null
-  const tail = candles.slice(-9)
-  const highest = Math.max(...tail.map((c) => c.h))
-  const lowest = Math.min(...tail.map((c) => c.l))
-  const close = tail[tail.length - 1]?.c ?? 0
-  const rsv = highest === lowest ? 50 : ((close - lowest) / (highest - lowest)) * 100
-  const k = (2 / 3) * 50 + (1 / 3) * rsv
-  const d = (2 / 3) * 50 + (1 / 3) * k
-  return { k, d, j: 3 * k - 2 * d }
+/** KDJ 全序列（9,3,3 递推），与蜡烛按索引对齐。 */
+function kdjSeries(candles: readonly Candle[]): { k: number[]; d: number[]; j: number[] } {
+  const k: number[] = []
+  const d: number[] = []
+  const j: number[] = []
+  let prevK = 50
+  let prevD = 50
+  for (let i = 0; i < candles.length; i++) {
+    const from = Math.max(0, i - 8)
+    let hi = -Infinity
+    let lo = Infinity
+    for (let t = from; t <= i; t++) {
+      const c = candles[t]
+      if (c === undefined) continue
+      hi = Math.max(hi, c.h)
+      lo = Math.min(lo, c.l)
+    }
+    const close = candles[i]?.c ?? 0
+    const rsv = hi === lo ? 50 : ((close - lo) / (hi - lo)) * 100
+    prevK = (2 / 3) * prevK + (1 / 3) * rsv
+    prevD = (2 / 3) * prevD + (1 / 3) * prevK
+    k.push(prevK)
+    d.push(prevD)
+    j.push(3 * prevK - 2 * prevD)
+  }
+  return { k, d, j }
 }
 
-function bollOf(closes: readonly number[]): { mid: number; up: number; low: number } | null {
-  if (closes.length < 20) return null
-  const tail = closes.slice(-20)
-  const mid = tail.reduce((sum, v) => sum + v, 0) / tail.length
-  const variance = tail.reduce((sum, v) => sum + (v - mid) ** 2, 0) / tail.length
-  const sd = Math.sqrt(variance)
-  return { mid, up: mid + 2 * sd, low: mid - 2 * sd }
+/** BOLL(20,2) 全序列；不足窗口的位置为 null。 */
+function bollSeries(closes: readonly number[], period = 20): { mid: (number | null)[]; up: (number | null)[]; low: (number | null)[] } {
+  const mid: (number | null)[] = []
+  const up: (number | null)[] = []
+  const low: (number | null)[] = []
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) {
+      mid.push(null)
+      up.push(null)
+      low.push(null)
+      continue
+    }
+    const window = closes.slice(i - period + 1, i + 1)
+    const mean = window.reduce((sum, v) => sum + v, 0) / period
+    const variance = window.reduce((sum, v) => sum + (v - mean) ** 2, 0) / period
+    const sd = Math.sqrt(variance)
+    mid.push(mean)
+    up.push(mean + 2 * sd)
+    low.push(mean - 2 * sd)
+  }
+  return { mid, up, low }
 }
 
-/** 绘制画线工具的线条（归一化坐标）。 */
+/** 组件级指标数据（全序列）。 */
+type IndicatorSeries =
+  | { kind: 'macd'; dif: number[]; dea: number[]; hist: number[] }
+  | { kind: 'kdj'; k: number[]; d: number[]; j: number[] }
+  | { kind: 'boll'; mid: (number | null)[]; up: (number | null)[]; low: (number | null)[] }
+
+/** 主图价格标尺（画线换算与标注绘制共用）。 */
+interface PriceScale {
+  lo: number
+  hi: number
+}
+
+/** 一次 paint 后的坐标状态：点击画线时把像素换回数据坐标。 */
+interface PaintState {
+  win: { start: number; count: number }
+  scale: PriceScale | null
+  len: number
+  plotW: number
+  mainH: number
+}
+
+/** 绘制画线工具的线条与标注（v2 数据锚定 + v1 归一化兼容）。 */
 function drawAnnotations(
   ctx: CanvasRenderingContext2D,
   opts: {
-    W: number; padL: number; padR: number; padT: number; mainH: number; plotW: number
+    padL: number; padT: number; mainH: number; plotW: number
+    win: { start: number; count: number }
+    scale: PriceScale | null
     lines: readonly DrawLine[]
     temp: { x: number; y: number } | null
   },
 ): void {
-  const { W, padL, padR, padT, mainH, plotW, lines, temp } = opts
-  const toX = (nx: number) => padL + nx * plotW
-  const toY = (ny: number) => padT + ny * mainH
+  const { padL, padT, mainH, plotW, win, scale, lines, temp } = opts
+  const slot = win.count > 0 ? plotW / win.count : plotW
+  /** v2：数据坐标 → 像素。 */
+  const dataX = (idx: number) => padL + (idx - win.start + 0.5) * slot
+  const dataY = (price: number) => scale === null
+    ? padT
+    : padT + ((scale.hi - price) / (scale.hi - scale.lo || 1)) * mainH
+  /** v1：绘图区归一化 → 像素。 */
+  const normX = (nx: number) => padL + nx * plotW
+  const normY = (ny: number) => padT + ny * mainH
+
   ctx.save()
+  // 线条超出主图区域时裁剪，避免画进副图/轴区
+  ctx.beginPath()
+  ctx.rect(padL, padT, plotW, mainH)
+  ctx.clip()
   ctx.strokeStyle = 'rgba(120,180,255,.8)'
   ctx.lineWidth = 1.2
-  ctx.setLineDash([5, 4])
   for (const line of lines) {
+    const isV2 = line.v === 2
+    if (isV2 && scale === null) continue
+    const x1 = isV2 ? dataX(line.x1) : normX(line.x1)
+    const y1 = isV2 ? dataY(line.y1) : normY(line.y1)
     if (line.label !== undefined) {
       ctx.setLineDash([])
       ctx.fillStyle = 'rgba(120,180,255,.9)'
       ctx.font = '11px "PingFang SC", "Noto Sans SC", sans-serif'
-      ctx.fillText(line.label, toX(line.x1) + 4, toY(line.y1) - 4)
+      ctx.fillText(line.label, x1 + 4, y1 - 4)
       continue
     }
+    ctx.setLineDash([5, 4])
     ctx.beginPath()
-    ctx.moveTo(toX(line.x1), toY(line.y1))
-    ctx.lineTo(toX(line.x2), toY(line.y2))
+    if (isV2 && line.kind === 'h') {
+      ctx.moveTo(padL, y1)
+      ctx.lineTo(padL + plotW, y1)
+    } else if (isV2 && line.kind === 'v') {
+      ctx.moveTo(x1, padT)
+      ctx.lineTo(x1, padT + mainH)
+    } else {
+      const x2 = isV2 ? dataX(line.x2) : normX(line.x2)
+      const y2 = isV2 ? dataY(line.y2) : normY(line.y2)
+      ctx.moveTo(x1, y1)
+      ctx.lineTo(x2, y2)
+    }
     ctx.stroke()
   }
-  if (temp !== null) {
-    ctx.beginPath()
-    ctx.moveTo(toX(temp.x), toY(temp.y))
-    ctx.lineTo(toX(temp.x), toY(temp.y))
-    ctx.stroke()
+  if (temp !== null && scale !== null) {
+    ctx.setLineDash([])
     ctx.fillStyle = 'rgba(120,180,255,.9)'
     ctx.beginPath()
-    ctx.arc(toX(temp.x), toY(temp.y), 2.5, 0, Math.PI * 2)
+    ctx.arc(dataX(temp.x), dataY(temp.y), 2.5, 0, Math.PI * 2)
     ctx.fill()
   }
   ctx.restore()
-  void W
-  void padR
 }
 
-/** 绘制叠加标的的收盘线（演示级：独立缩放到主图区域）。 */
+/** 绘制叠加标的的收盘线（独立缩放：跨工作区 Token 量级差异大，做走势对比）。 */
 function drawOverlayLine(
   ctx: CanvasRenderingContext2D,
   opts: {
-    W: number; padL: number; padR: number; padT: number; mainH: number; plotW: number
+    padL: number; padT: number; mainH: number; plotW: number
     candles: readonly Candle[]
   },
 ): void {
@@ -193,7 +315,7 @@ function drawOverlayLine(
   const X = (i: number) => padL + (i / Math.max(1, candles.length - 1)) * plotW
   const Y = (p: number) => padT + ((hi - p) / span) * mainH
   ctx.save()
-  ctx.strokeStyle = 'rgba(255,190,80,.85)'
+  ctx.strokeStyle = OVERLAY_C
   ctx.lineWidth = 1.3
   ctx.setLineDash([6, 4])
   ctx.beginPath()
@@ -205,15 +327,13 @@ function drawOverlayLine(
   })
   ctx.stroke()
   ctx.restore()
-  void opts.W
-  void opts.padR
 }
 
-/** 绘制分时/5日叠加标的价格线（独立缩放到主图区域）。 */
+/** 绘制分时/5日叠加标的价格线（独立缩放，理由同上）。 */
 function drawOverlayLineSeries(
   ctx: CanvasRenderingContext2D,
   opts: {
-    W: number; padL: number; padR: number; padT: number; mainH: number; plotW: number
+    padL: number; padT: number; mainH: number; plotW: number
     points: readonly IntradayPoint[]
   },
 ): void {
@@ -225,7 +345,7 @@ function drawOverlayLineSeries(
   const X = (i: number) => padL + (i / Math.max(1, points.length - 1)) * plotW
   const Y = (p: number) => padT + ((hi - p) / span) * mainH
   ctx.save()
-  ctx.strokeStyle = 'rgba(255,190,80,.85)'
+  ctx.strokeStyle = OVERLAY_C
   ctx.lineWidth = 1.3
   ctx.setLineDash([6, 4])
   ctx.beginPath()
@@ -237,8 +357,6 @@ function drawOverlayLineSeries(
   })
   ctx.stroke()
   ctx.restore()
-  void opts.W
-  void opts.padR
 }
 
 export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, livePrice, tick, overlayOptions, overlaySeries, overlayIntradaySeries, overlayFiveDaySeries, style }: Props) {
@@ -248,35 +366,40 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState(0)
   const [toolNotice, setToolNotice] = useState<string | null>(null)
-  const [indicator, setIndicator] = useState<'none' | 'macd' | 'kdj' | 'boll'>('none')
-  const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false)
-  const [moreOpen, setMoreOpen] = useState(false)
+  const [indicator, setIndicator] = useState<IndicatorKind>('none')
+  const [openMenu, setOpenMenu] = useState<MenuKind | null>(null)
   const [maPeriods, setMaPeriods] = useState({ short: 5, mid: 10, long: 20 })
   const [drawMode, setDrawMode] = useState(false)
-  const [drawTool, setDrawTool] = useState<'trend' | 'h' | 'v' | 'label'>('trend')
-  const [drawMenuOpen, setDrawMenuOpen] = useState(false)
+  const [drawTool, setDrawTool] = useState<DrawTool>('trend')
   const [tempPoint, setTempPoint] = useState<{ x: number; y: number } | null>(null)
   const [overlayCode, setOverlayCode] = useState<string | null>(null)
-  const [overlayMenuOpen, setOverlayMenuOpen] = useState(false)
-  const [drawLines, setDrawLines] = useState<DrawLine[]>(() => {
-    try {
-      const raw = localStorage.getItem(`ths.draw-lines.${code}`)
-      const parsed: unknown = raw === null ? [] : JSON.parse(raw)
-      return Array.isArray(parsed) ? parsed.filter((x): x is DrawLine =>
-        typeof x === 'object' && x !== null
-        && typeof (x as DrawLine).x1 === 'number' && typeof (x as DrawLine).y1 === 'number'
-        && typeof (x as DrawLine).x2 === 'number' && typeof (x as DrawLine).y2 === 'number'
-      ) : []
-    } catch {
-      return []
-    }
-  })
+  const [drawLines, setDrawLines] = useState<DrawLine[]>(() => loadDrawLines(code))
   const panRef = useRef<{ x: number; pan: number } | null>(null)
+  /** 平移拖拽是否发生了位移：抑制随后的 click（固定光标 / 画线误触）。 */
+  const dragMovedRef = useRef(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const hoverRef = useRef(-1)
   const [pinnedHover, setPinnedHover] = useState(false)
   const setInfoRef = useRef(setInfo)
   setInfoRef.current = setInfo
+  /** 最近一次 paint 的窗口/标尺（画线像素 → 数据坐标换算）。 */
+  const paintStateRef = useRef<PaintState | null>(null)
+  /** 画布 CSS 尺寸缓存：只在 ResizeObserver 报告变化时更新，hover 重绘不再触发布局读写。 */
+  const sizeRef = useRef<{ w: number; h: number } | null>(null)
+  /** 当前 drawLines 归属的标的：切标的时先重载而不是把旧线写进新 key。 */
+  const drawCodeRef = useRef(code)
+
+  // 工具栏四个弹出菜单（互斥展开，Esc/点击外部关闭）
+  const moreRef = useRef<HTMLDivElement>(null)
+  const overlayMenuRef = useRef<HTMLDivElement>(null)
+  const drawMenuRef = useRef<HTMLDivElement>(null)
+  const indicatorMenuRef = useRef<HTMLDivElement>(null)
+  useDismissable(openMenu === 'more', moreRef, () => setOpenMenu(null))
+  useDismissable(openMenu === 'overlay', overlayMenuRef, () => setOpenMenu(null))
+  useDismissable(openMenu === 'draw', drawMenuRef, () => setOpenMenu(null))
+  useDismissable(openMenu === 'indicator', indicatorMenuRef, () => setOpenMenu(null))
+  const toggleMenu = (menu: MenuKind) => setOpenMenu((cur) => (cur === menu ? null : menu))
 
   const weekly = useMemo(() => aggregateWeekly(daily), [daily])
   const monthly = useMemo(() => aggregateMonthly(daily), [daily])
@@ -288,19 +411,27 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     return () => clearInterval(id)
   }, [crash])
 
+  /** 切换周期：模式按钮与全局 1~5 快捷键共用（重置光标/缩放/临时画点）。 */
+  const switchMode = (next: ChartMode) => {
+    setMode(next)
+    hoverRef.current = -1
+    setPinnedHover(false)
+    setZoom(1)
+    setPan(0)
+    setTempPoint(null)
+  }
+
   // 全局 1~5 快捷键切换周期
   useEffect(() => {
     const onMode = (event: Event) => {
       const detail = (event as CustomEvent<ChartMode>).detail
       if (detail === undefined) return
-      setMode(detail)
-      hoverRef.current = -1
-      setPinnedHover(false)
-      setZoom(1)
-      setPan(0)
+      switchMode(detail)
     }
     window.addEventListener('ths:chart-mode', onMode)
     return () => window.removeEventListener('ths:chart-mode', onMode)
+    // switchMode 只操作 setState/ref，引用稳定性不影响行为
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 图表工具轻提示自动消失
@@ -310,8 +441,15 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     return () => clearTimeout(timer)
   }, [toolNotice])
 
-  // 画线持久化
+  // 画线持久化 / 切标的重载。code 变化的那次 effect 只做重载：
+  // 若直接持久化，会把上一标的的线写进新标的的 key。
   useEffect(() => {
+    if (drawCodeRef.current !== code) {
+      drawCodeRef.current = code
+      setDrawLines(loadDrawLines(code))
+      setTempPoint(null)
+      return
+    }
     try {
       localStorage.setItem(`ths.draw-lines.${code}`, JSON.stringify(drawLines))
     } catch {
@@ -334,22 +472,39 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     }
   }, [mode, daily, weekly, monthly, intraday, fiveDay])
 
+  const activeCandles = series.kind === 'candle' ? series.candles : []
+
+  // 指标随当前 K 线周期计算（线图模式没有蜡烛序列，提示不适用）
+  const indicatorSeries = useMemo<IndicatorSeries | null>(() => {
+    if (indicator === 'none' || activeCandles.length === 0) return null
+    const closes = activeCandles.map((c) => c.c)
+    if (indicator === 'macd') return { kind: 'macd', ...macdSeries(closes) }
+    if (indicator === 'kdj') return { kind: 'kdj', ...kdjSeries(activeCandles) }
+    return { kind: 'boll', ...bollSeries(closes) }
+  }, [indicator, activeCandles])
+
   const indicatorText = useMemo(() => {
     if (indicator === 'none') return null
-    const closes = daily.map((c) => c.c)
-    if (indicator === 'macd') {
-      const m = macdOf(closes)
-      return m === null ? null : `MACD DIF ${fmtToken(m.dif)} · DEA ${fmtToken(m.dea)} · HIST ${fmtToken(m.hist)}`
+    if (series.kind === 'line') return '指标仅适用于 K 线周期（日K / 周K / 月K）'
+    if (indicatorSeries === null) return null
+    const last = activeCandles.length - 1
+    if (indicatorSeries.kind === 'macd') {
+      return `MACD(12,26,9) DIF ${fmtToken(indicatorSeries.dif[last] ?? 0)} · DEA ${fmtToken(indicatorSeries.dea[last] ?? 0)} · HIST ${fmtToken(indicatorSeries.hist[last] ?? 0)}`
     }
-    if (indicator === 'kdj') {
-      const k = kdjOf(daily)
-      return k === null ? null : `KDJ K ${k.k.toFixed(1)} · D ${k.d.toFixed(1)} · J ${k.j.toFixed(1)}`
+    if (indicatorSeries.kind === 'kdj') {
+      return `KDJ(9,3,3) K ${(indicatorSeries.k[last] ?? 0).toFixed(1)} · D ${(indicatorSeries.d[last] ?? 0).toFixed(1)} · J ${(indicatorSeries.j[last] ?? 0).toFixed(1)}`
     }
-    const b = bollOf(closes)
-    return b === null ? null : `BOLL UP ${fmtToken(b.up)} · MID ${fmtToken(b.mid)} · LOW ${fmtToken(b.low)}`
-  }, [indicator, daily])
+    const up = indicatorSeries.up[last]
+    const mid = indicatorSeries.mid[last]
+    const low = indicatorSeries.low[last]
+    if (up == null || mid == null || low == null) return 'BOLL(20,2) 数据不足（需要至少 20 根 K 线）'
+    return `BOLL(20,2) UP ${fmtToken(up)} · MID ${fmtToken(mid)} · LOW ${fmtToken(low)}`
+  }, [indicator, series.kind, indicatorSeries, activeCandles.length])
 
   const overlayDaily = overlayCode !== null ? overlaySeries?.get(overlayCode) : undefined
+  const overlayName = overlayCode !== null
+    ? ((overlayOptions ?? []).find((o) => o.code === overlayCode)?.name ?? overlayCode)
+    : null
   const dataEmpty = series.kind === 'candle' ? series.candles.length === 0 : series.points.length === 0
 
   const paint = () => {
@@ -357,21 +512,31 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-
     const parent = canvas.parentElement
     if (!parent) return
-    const r = parent.getBoundingClientRect()
-    const dpr = window.devicePixelRatio || 1
-    canvas.width = Math.max(1, Math.round(r.width * dpr))
-    canvas.height = Math.max(1, Math.round(r.height * dpr))
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const W = r.width
-    const H = r.height
 
-    const padL = 52
-    const padR = 12
-    const padT = 20
-    const padB = 15
+    let size = sizeRef.current
+    if (size === null || size.w <= 0 || size.h <= 0) {
+      const r = parent.getBoundingClientRect()
+      size = { w: r.width, h: r.height }
+      sizeRef.current = size
+    }
+    const dpr = window.devicePixelRatio || 1
+    const pxW = Math.max(1, Math.round(size.w * dpr))
+    const pxH = Math.max(1, Math.round(size.h * dpr))
+    // 仅在尺寸真正变化时 resize（width/height 赋值本身会清屏并触发重排）
+    if (canvas.width !== pxW || canvas.height !== pxH) {
+      canvas.width = pxW
+      canvas.height = pxH
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const W = size.w
+    const H = size.h
+
+    const padL = PAD_L
+    const padR = PAD_R
+    const padT = PAD_T
+    const padB = PAD_B
     const mainH = (H - padT - padB) * 0.64
     const volTop = padT + mainH + 8
     const volH = H - padB - volTop
@@ -388,14 +553,25 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       : { kind: 'line' as const, points: series.points.slice(win.start, win.start + win.count), intraday: series.intraday }
     const hover = hoverRef.current
 
+    let scale: PriceScale | null = null
     if (visibleSeries.kind === 'candle') {
-      drawCandleView(ctx, {
+      const paneKind = indicatorSeries !== null && indicatorSeries.kind !== 'boll' ? indicatorSeries.kind : null
+      const slice = <T,>(arr: readonly T[]) => arr.slice(win.start, win.start + win.count)
+      scale = drawCandleView(ctx, {
         W, H, padL, padR, padT, padB, mainH, volTop, volH, plotW,
         candles: visibleSeries.candles, crash, pulse, hover, prevToken,
         maPeriods,
+        pane: paneKind === null || indicatorSeries === null || indicatorSeries.kind === 'boll'
+          ? null
+          : indicatorSeries.kind === 'macd'
+            ? { kind: 'macd', a: slice(indicatorSeries.dif), b: slice(indicatorSeries.dea), c: slice(indicatorSeries.hist) }
+            : { kind: 'kdj', a: slice(indicatorSeries.k), b: slice(indicatorSeries.d), c: slice(indicatorSeries.j) },
+        boll: indicatorSeries?.kind === 'boll'
+          ? { mid: slice(indicatorSeries.mid), up: slice(indicatorSeries.up), low: slice(indicatorSeries.low) }
+          : null,
       })
     } else {
-      drawLineView(ctx, {
+      scale = drawLineView(ctx, {
         W, H, padL, padR, padT, padB, mainH, volTop, volH, plotW,
         points: visibleSeries.points, intraday: visibleSeries.intraday, crash, hover,
         baseMinute: prevToken / 240,
@@ -403,34 +579,53 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       })
     }
 
+    // 叠加线随主图可见窗口按比例联动
     const overlayLinePoints = mode === 'intraday' && overlayCode !== null
       ? overlayIntradaySeries?.get(overlayCode)
       : mode === 'fiveday' && overlayCode !== null
         ? overlayFiveDaySeries?.get(overlayCode)
         : undefined
+    let overlayDrawn = false
     if (overlayLinePoints !== undefined && overlayLinePoints.length > 0) {
-      drawOverlayLineSeries(ctx, { W, padL, padR, padT, mainH, plotW, points: overlayLinePoints })
+      drawOverlayLineSeries(ctx, {
+        padL, padT, mainH, plotW,
+        points: sliceProportional(overlayLinePoints, win.start, win.count, len),
+      })
+      overlayDrawn = true
     }
-
     if (visibleSeries.kind === 'candle' && overlayDaily !== undefined && overlayDaily.length > 0) {
-      drawOverlayLine(ctx, { W, padL, padR, padT, mainH, plotW, candles: overlayDaily })
+      drawOverlayLine(ctx, {
+        padL, padT, mainH, plotW,
+        candles: sliceProportional(overlayDaily, win.start, win.count, len),
+      })
+      overlayDrawn = true
+    }
+    if (overlayDrawn && overlayName !== null) {
+      ctx.fillStyle = OVERLAY_C
+      ctx.textAlign = 'right'
+      ctx.fillText(`叠加 ${overlayName}（独立标尺）`, W - padR, padT - 9)
+      ctx.textAlign = 'left'
     }
 
     drawAnnotations(ctx, {
-      W, padL, padR, padT, mainH, plotW,
+      padL, padT, mainH, plotW,
+      win,
+      scale,
       lines: drawLines,
       temp: tempPoint,
     })
 
+    paintStateRef.current = { win, scale, len, plotW, mainH }
+
     // 信息条（空数组由纯函数返回 null，避免访问 undefined 属性）
     if (visibleSeries.kind === 'candle') {
-      const info = candleInfoOf(visibleSeries.candles, hover)
-      if (info === null) return
-      setInfoRef.current({ kind: 'candle', ...info })
+      const nextInfo = candleInfoOf(visibleSeries.candles, hover)
+      if (nextInfo === null) return
+      setInfoRef.current({ kind: 'candle', ...nextInfo })
     } else {
-      const info = lineInfoOf(visibleSeries.points, hover, visibleSeries.intraday)
-      if (info === null) return
-      setInfoRef.current({ kind: 'line', ...info })
+      const nextInfo = lineInfoOf(visibleSeries.points, hover, visibleSeries.intraday)
+      if (nextInfo === null) return
+      setInfoRef.current({ kind: 'line', ...nextInfo })
     }
   }
 
@@ -439,7 +634,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   useEffect(() => {
     paint()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, crash, pulse, version, livePrice, zoom, pan, overlayDaily])
+  }, [series, crash, pulse, version, livePrice, zoom, pan, overlayDaily, overlayCode, indicatorSeries, drawLines, tempPoint, maPeriods])
 
   // 尺寸自适应（paintRef 每次渲染更新，避免闭包过期）
   const paintRef = useRef(paint)
@@ -447,9 +642,28 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const ro = new ResizeObserver(() => paintRef.current())
-    ro.observe(canvas.parentElement as Element)
+    const parent = canvas.parentElement as Element
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (rect !== undefined) sizeRef.current = { w: rect.width, h: rect.height }
+      paintRef.current()
+    })
+    ro.observe(parent)
     return () => ro.disconnect()
+  }, [])
+
+  // 滚轮缩放：React 的 onWheel 在根节点是 passive 监听，preventDefault 无效，
+  // 改为原生 non-passive 监听，缩放时不再把滚动泄漏给外层容器。
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault()
+      const factor = e.deltaY < 0 ? 1.25 : 0.8
+      setZoom((z) => Math.max(1, Math.min(20, z * factor)))
+    }
+    canvas.addEventListener('wheel', onWheelNative, { passive: false })
+    return () => canvas.removeEventListener('wheel', onWheelNative)
   }, [])
 
   const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -457,8 +671,6 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     const canvas = canvasRef.current
     if (!canvas) return
     const r = canvas.getBoundingClientRect()
-    const padL = 52
-    const padR = 12
     const len = series.kind === 'candle' ? series.candles.length : series.points.length
     const win = visibleWindow(len, zoom, pan)
     const n = win.count
@@ -466,8 +678,8 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       hoverRef.current = -1
       return
     }
-    const slot = (r.width - padL - padR) / n
-    const i = Math.floor((e.clientX - r.left - padL) / slot)
+    const slot = (r.width - PAD_L - PAD_R) / n
+    const i = Math.floor((e.clientX - r.left - PAD_L) / slot)
     const nh = i >= 0 && i < n ? i : -1
     if (nh !== hoverRef.current) {
       hoverRef.current = nh
@@ -481,18 +693,11 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     paint()
   }
 
-  const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault()
-    const factor = e.deltaY < 0 ? 1.25 : 0.8
-    const nextZoom = Math.max(1, Math.min(20, zoom * factor))
-    setZoom(nextZoom)
-    setPan((prev) => prev)
-  }
-
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
     panRef.current = { x: e.clientX, pan }
+    dragMovedRef.current = false
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -500,8 +705,10 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
     if (start === null) return
     const canvas = canvasRef.current
     if (!canvas) return
-    const r = canvas.getBoundingClientRect()
     const dx = e.clientX - start.x
+    if (Math.abs(dx) > 4) dragMovedRef.current = true
+    if (!dragMovedRef.current) return
+    const r = canvas.getBoundingClientRect()
     const len = series.kind === 'candle' ? series.candles.length : series.points.length
     const win = visibleWindow(len, zoom, pan)
     const maxPan = len - win.count
@@ -528,11 +735,14 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   }
 
   const onCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // 平移拖拽结束触发的 click 不当作点击（否则会误固定光标 / 误画线）
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false
+      return
+    }
     const canvas = canvasRef.current
     if (!canvas) return
     const r = canvas.getBoundingClientRect()
-    const padL = 52
-    const padR = 12
 
     // 非画线模式：点击固定十字光标。
     if (!drawMode) {
@@ -540,8 +750,8 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       const win = visibleWindow(len, zoom, pan)
       const n = win.count
       if (n <= 0) return
-      const slot = (r.width - padL - padR) / n
-      const i = Math.floor((e.clientX - r.left - padL) / slot)
+      const slot = (r.width - PAD_L - PAD_R) / n
+      const i = Math.floor((e.clientX - r.left - PAD_L) / slot)
       const nh = i >= 0 && i < n ? i : -1
       if (nh >= 0) {
         hoverRef.current = nh
@@ -551,40 +761,46 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
       return
     }
 
-    const padT = 20
-    const padB = 15
-    const mainH = (r.height - padT - padB) * 0.64
-    const plotW = r.width - padL - padR
-    if (plotW <= 0 || mainH <= 0) return
-    const nx = Math.max(0, Math.min(1, (e.clientX - r.left - padL) / plotW))
-    const ny = Math.max(0, Math.min(1, (e.clientY - r.top - padT) / mainH))
+    // 画线模式：像素 → 数据坐标（索引 + 价格），随缩放/平移锚定。
+    const st = paintStateRef.current
+    if (st === null || st.scale === null || st.win.count <= 0 || st.plotW <= 0 || st.mainH <= 0) {
+      setToolNotice('暂无数据，无法画线')
+      return
+    }
+    const slot = st.plotW / st.win.count
+    const px = e.clientX - r.left
+    const py = e.clientY - r.top
+    const idx = st.win.start + (Math.max(PAD_L, Math.min(PAD_L + st.plotW, px)) - PAD_L) / slot - 0.5
+    const clampedY = Math.max(PAD_T, Math.min(PAD_T + st.mainH, py))
+    const price = st.scale.hi - ((clampedY - PAD_T) / st.mainH) * (st.scale.hi - st.scale.lo)
     if (drawTool === 'h') {
-      setDrawLines((prev) => [...prev, { x1: 0, y1: ny, x2: 1, y2: ny }])
+      setDrawLines((prev) => [...prev, { v: 2, kind: 'h', x1: idx, y1: price, x2: idx, y2: price }])
       setToolNotice('已画水平线')
       return
     }
     if (drawTool === 'v') {
-      setDrawLines((prev) => [...prev, { x1: nx, y1: 0, x2: nx, y2: 1 }])
+      setDrawLines((prev) => [...prev, { v: 2, kind: 'v', x1: idx, y1: price, x2: idx, y2: price }])
       setToolNotice('已画垂直线')
       return
     }
     if (drawTool === 'label') {
       const text = window.prompt('标注内容', '标注')
       if (text !== null && text.trim() !== '') {
-        setDrawLines((prev) => [...prev, { x1: nx, y1: ny, x2: nx, y2: ny, label: text.trim() }])
+        setDrawLines((prev) => [...prev, { v: 2, kind: 'label', x1: idx, y1: price, x2: idx, y2: price, label: text.trim() }])
       }
       return
     }
     if (tempPoint === null) {
-      setTempPoint({ x: nx, y: ny })
+      setTempPoint({ x: idx, y: price })
     } else {
-      setDrawLines((prev) => [...prev, { x1: tempPoint.x, y1: tempPoint.y, x2: nx, y2: ny }])
+      setDrawLines((prev) => [...prev, { v: 2, kind: 'trend', x1: tempPoint.x, y1: tempPoint.y, x2: idx, y2: price }])
       setTempPoint(null)
     }
   }
 
+  /** 全屏图表容器本身（不是整个文档）。 */
   const toggleFullscreen = async () => {
-    const el = document.documentElement
+    const el = wrapRef.current ?? document.documentElement
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen()
@@ -597,19 +813,19 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
   }
 
   return (
-    <div className="chart-wrap" style={style}>
+    <div className="chart-wrap" style={style} ref={wrapRef}>
       <div className="chart-tabs">
         {MODES.map((m) => (
-          <button key={m.key} className={`ct${mode === m.key ? ' active' : ''}`} onClick={() => { setMode(m.key); hoverRef.current = -1; setPinnedHover(false) }}>
+          <button key={m.key} className={`ct${mode === m.key ? ' active' : ''}`} onClick={() => switchMode(m.key)}>
             {m.label}
           </button>
         ))}
-        <div className="indicator-select">
-          <button className="ct" onClick={() => setMoreOpen((o) => !o)}>
+        <div className="indicator-select" ref={moreRef}>
+          <button className="ct" onClick={() => toggleMenu('more')}>
             更多
             <Icon name="chevronDown" size={8} />
           </button>
-          {moreOpen && (
+          {openMenu === 'more' && (
             <div className="indicator-menu ma-menu">
               <div className="ma-menu-title">MA 参数</div>
               <label className="ma-field">
@@ -619,7 +835,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
                   min={1}
                   max={120}
                   value={maPeriods.short}
-                  onChange={(e) => setMaPeriods((p) => ({ ...p, short: Number(e.target.value) || 1 }))}
+                  onChange={(e) => setMaPeriods((p) => ({ ...p, short: Math.min(120, Math.max(1, Number(e.target.value) || 1)) }))}
                 />
               </label>
               <label className="ma-field">
@@ -629,7 +845,7 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
                   min={1}
                   max={120}
                   value={maPeriods.mid}
-                  onChange={(e) => setMaPeriods((p) => ({ ...p, mid: Number(e.target.value) || 1 }))}
+                  onChange={(e) => setMaPeriods((p) => ({ ...p, mid: Math.min(120, Math.max(1, Number(e.target.value) || 1)) }))}
                 />
               </label>
               <label className="ma-field">
@@ -639,47 +855,48 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
                   min={1}
                   max={120}
                   value={maPeriods.long}
-                  onChange={(e) => setMaPeriods((p) => ({ ...p, long: Number(e.target.value) || 1 }))}
+                  onChange={(e) => setMaPeriods((p) => ({ ...p, long: Math.min(120, Math.max(1, Number(e.target.value) || 1)) }))}
                 />
               </label>
-              <button onClick={() => setMoreOpen(false)}>完成</button>
+              <button onClick={() => setOpenMenu(null)}>完成</button>
             </div>
           )}
         </div>
         <span className="grow" />
         <div className="chart-tools">
-          <div className="indicator-select">
-            <button title="叠加标的" onClick={() => setOverlayMenuOpen((o) => !o)}>
+          <div className="indicator-select" ref={overlayMenuRef}>
+            <button title="叠加标的" onClick={() => toggleMenu('overlay')}>
               叠加{overlayCode !== null ? ' · 开' : ''}
               <Icon name="chevronDown" size={8} />
             </button>
-            {overlayMenuOpen && (
+            {openMenu === 'overlay' && (
               <div className="indicator-menu">
-                <button onClick={() => { setOverlayCode(null); setOverlayMenuOpen(false) }}>取消叠加</button>
+                <button onClick={() => { setOverlayCode(null); setOpenMenu(null) }}>取消叠加</button>
                 {(overlayOptions ?? []).map((opt) => (
                   <button
                     key={opt.code}
                     onClick={() => {
                       setOverlayCode(opt.code)
-                      setOverlayMenuOpen(false)
+                      setOpenMenu(null)
                     }}
                   >
                     {opt.name}
                   </button>
                 ))}
                 {(overlayOptions ?? []).length === 0 && (
-                  <button onClick={() => { setOverlayMenuOpen(false); setToolNotice('暂无可用叠加标的') }}>暂无可用</button>
+                  <button onClick={() => { setOpenMenu(null); setToolNotice('暂无可用叠加标的') }}>暂无可用</button>
                 )}
               </div>
             )}
           </div>
-          <div className="indicator-select">
+          <div className="indicator-select" ref={drawMenuRef}>
             <button
               title="画线工具"
               className={drawMode ? 'tool-active' : undefined}
               onClick={() => {
                 setDrawMode((v) => !v)
-                setDrawMenuOpen(false)
+                setOpenMenu(null)
+                setTempPoint(null)
                 setToolNotice(drawMode ? '画线已关闭' : `画线模式：${drawTool === 'trend' ? '点击两个点画趋势线' : drawTool === 'h' ? '点击画水平线' : drawTool === 'v' ? '点击画垂直线' : '点击添加标注'}`)
               }}
             >
@@ -687,35 +904,35 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
             </button>
             <button
               title="画线类型"
-              onClick={() => setDrawMenuOpen((o) => !o)}
+              onClick={() => toggleMenu('draw')}
             >
               <Icon name="chevronDown" size={8} />
             </button>
-            {drawMode && drawMenuOpen && (
+            {openMenu === 'draw' && (
               <div className="indicator-menu draw-menu">
-                <button onClick={() => { setDrawTool('trend'); setDrawMenuOpen(false); setToolNotice('趋势线：点击两个点') }}>趋势线</button>
-                <button onClick={() => { setDrawTool('h'); setDrawMenuOpen(false); setToolNotice('水平线：点击画线') }}>水平线</button>
-                <button onClick={() => { setDrawTool('v'); setDrawMenuOpen(false); setToolNotice('垂直线：点击画线') }}>垂直线</button>
-                <button onClick={() => { setDrawTool('label'); setDrawMenuOpen(false); setToolNotice('标注：点击添加文字') }}>标注</button>
-                <button onClick={() => { setDrawLines([]); setDrawMenuOpen(false); setToolNotice('已清除画线') }}>清除画线</button>
+                <button onClick={() => { setDrawTool('trend'); setDrawMode(true); setOpenMenu(null); setToolNotice('趋势线：点击两个点') }}>趋势线</button>
+                <button onClick={() => { setDrawTool('h'); setDrawMode(true); setOpenMenu(null); setToolNotice('水平线：点击画线') }}>水平线</button>
+                <button onClick={() => { setDrawTool('v'); setDrawMode(true); setOpenMenu(null); setToolNotice('垂直线：点击画线') }}>垂直线</button>
+                <button onClick={() => { setDrawTool('label'); setDrawMode(true); setOpenMenu(null); setToolNotice('标注：点击添加文字') }}>标注</button>
+                <button onClick={() => { setDrawLines([]); setTempPoint(null); setOpenMenu(null); setToolNotice('已清除画线') }}>清除画线</button>
               </div>
             )}
           </div>
-          <div className="indicator-select">
-            <button title="技术指标" onClick={() => setIndicatorMenuOpen((o) => !o)}>
+          <div className="indicator-select" ref={indicatorMenuRef}>
+            <button title="技术指标" onClick={() => toggleMenu('indicator')}>
               指标{indicator !== 'none' ? ` · ${indicator.toUpperCase()}` : ''}
               <Icon name="chevronDown" size={8} />
             </button>
-            {indicatorMenuOpen && (
+            {openMenu === 'indicator' && (
               <div className="indicator-menu">
-                <button onClick={() => { setIndicator('none'); setIndicatorMenuOpen(false) }}>无</button>
-                <button onClick={() => { setIndicator('macd'); setIndicatorMenuOpen(false) }}>MACD</button>
-                <button onClick={() => { setIndicator('kdj'); setIndicatorMenuOpen(false) }}>KDJ</button>
-                <button onClick={() => { setIndicator('boll'); setIndicatorMenuOpen(false) }}>BOLL</button>
+                <button onClick={() => { setIndicator('none'); setOpenMenu(null) }}>无</button>
+                <button onClick={() => { setIndicator('macd'); setOpenMenu(null) }}>MACD</button>
+                <button onClick={() => { setIndicator('kdj'); setOpenMenu(null) }}>KDJ</button>
+                <button onClick={() => { setIndicator('boll'); setOpenMenu(null) }}>BOLL</button>
               </div>
             )}
           </div>
-          <button title="全屏" onClick={() => void toggleFullscreen()}>
+          <button title="全屏图表" onClick={() => void toggleFullscreen()}>
             <Icon name="expand" size={11} />
           </button>
         </div>
@@ -766,7 +983,6 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
           style={{ touchAction: 'none', cursor: drawMode ? 'crosshair' : undefined }}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
-          onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -781,6 +997,21 @@ export function KLineChart({ code, daily, intraday, fiveDay, prevToken, crash, l
 }
 
 /* ================= 蜡烛视图（日K / 周K / 月K） ================= */
+
+/** 副图指标（已按可见窗口切片；a/b 为线，c 为柱）。 */
+interface IndicatorPane {
+  kind: 'macd' | 'kdj'
+  a: number[]
+  b: number[]
+  c: number[]
+}
+
+/** BOLL 主图叠加（已按可见窗口切片）。 */
+interface BollOverlay {
+  mid: (number | null)[]
+  up: (number | null)[]
+  low: (number | null)[]
+}
 
 interface CandleViewOpts {
   W: number
@@ -799,12 +1030,16 @@ interface CandleViewOpts {
   hover: number
   prevToken: number
   maPeriods: { short: number; mid: number; long: number }
+  /** 非空时副图渲染该指标（替换代码量子图）。 */
+  pane: IndicatorPane | null
+  /** 非空时主图叠加 BOLL 上/中/下轨。 */
+  boll: BollOverlay | null
 }
 
-function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
-  const { W, padL, padR, padT, mainH, volTop, volH, plotW, candles, crash, pulse, hover, prevToken, maPeriods } = o
+function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts): PriceScale | null {
+  const { W, padL, padR, padT, mainH, volTop, volH, plotW, candles, crash, pulse, hover, prevToken, maPeriods, pane, boll } = o
   const n = candles.length
-  if (n === 0) return
+  if (n === 0) return null
   const slot = plotW / n
   const bw = Math.max(2, slot * 0.62)
   const X = (i: number) => padL + i * slot + slot / 2
@@ -814,6 +1049,11 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
   for (const k of candles) {
     lo = Math.min(lo, k.l)
     hi = Math.max(hi, k.h)
+  }
+  // BOLL 轨道可能越出价格区间：纳入标尺，避免带被裁掉
+  if (boll !== null) {
+    for (const v of boll.up) if (v != null) hi = Math.max(hi, v)
+    for (const v of boll.low) if (v != null) lo = Math.min(lo, v)
   }
   const pad = (hi - lo) * 0.05
   lo -= pad
@@ -846,7 +1086,7 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
     ctx.fillText(fmtToken(prevToken), 5, Y(prevToken) - 7)
   }
 
-  // 代码量子图
+  // 副图外框
   ctx.strokeStyle = GRID
   ctx.beginPath()
   ctx.moveTo(padL, volTop)
@@ -856,17 +1096,14 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
   ctx.moveTo(padL, volTop + volH)
   ctx.lineTo(W - padR, volTop + volH)
   ctx.stroke()
-  ctx.fillStyle = AXIS
-  const maxLoc = Math.max(...candles.map((k) => Math.abs(k.loc)), 1)
-  ctx.fillText(fmt(maxLoc), 5, volTop + 5)
-  ctx.fillText(fmt(Math.round(maxLoc / 2)), 5, volTop + volH / 2)
-  ctx.fillText('0', 5, volTop + volH - 4)
 
   // 日期刻度（按月）
   ctx.textAlign = 'center'
   let lastM = -1
   for (let i = 0; i < n; i++) {
-    const d = new Date(candles[i].t)
+    const k = candles[i]
+    if (k === undefined) continue
+    const d = new Date(k.t)
     const m = d.getMonth()
     if (m !== lastM) {
       lastM = m
@@ -883,6 +1120,7 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
   // 蜡烛
   for (let i = 0; i < n; i++) {
     const k = candles[i]
+    if (k === undefined) continue
     const up = k.c >= k.o
     const col = up ? UP : DOWN
     const x = X(i)
@@ -916,9 +1154,9 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
 
   // 均线
   const closes = candles.map((k) => k.c)
-  const drawMA = (arr: (number | null)[], col: string) => {
+  const drawSeriesLine = (arr: readonly (number | null)[], col: string, width = 1.1) => {
     ctx.strokeStyle = col
-    ctx.lineWidth = 1.1
+    ctx.lineWidth = width
     ctx.beginPath()
     let started = false
     for (let i = 0; i < n; i++) {
@@ -939,18 +1177,26 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
   const pShort = Math.max(1, Math.round(maPeriods.short))
   const pMid = Math.max(1, Math.round(maPeriods.mid))
   const pLong = Math.max(1, Math.round(maPeriods.long))
-  drawMA(ma(closes, pShort), MA5_C)
-  drawMA(ma(closes, pMid), MA10_C)
-  drawMA(ma(closes, pLong), MA20_C)
+  drawSeriesLine(ma(closes, pShort), MA5_C)
+  drawSeriesLine(ma(closes, pMid), MA10_C)
+  drawSeriesLine(ma(closes, pLong), MA20_C)
+
+  // BOLL 主图叠加
+  if (boll !== null) {
+    drawSeriesLine(boll.up, BOLL_C, 1)
+    drawSeriesLine(boll.mid, 'rgba(232,197,88,.7)', 1)
+    drawSeriesLine(boll.low, BOLL_C, 1)
+  }
 
   // 主图图例
   ctx.textAlign = 'left'
   let lx = padL + 2
   const lastClose = closes[closes.length - 1]
   const legend: [string, string][] = [
-    [`MA${pShort}: ${fmtToken(Math.round(ma(closes, pShort)[n - 1] ?? lastClose))}`, MA5_C],
-    [`MA${pMid}: ${fmtToken(Math.round(ma(closes, pMid)[n - 1] ?? lastClose))}`, MA10_C],
-    [`MA${pLong}: ${fmtToken(Math.round(ma(closes, pLong)[n - 1] ?? lastClose))}`, MA20_C],
+    [`MA${pShort}: ${fmtToken(Math.round(ma(closes, pShort)[n - 1] ?? lastClose ?? 0))}`, MA5_C],
+    [`MA${pMid}: ${fmtToken(Math.round(ma(closes, pMid)[n - 1] ?? lastClose ?? 0))}`, MA10_C],
+    [`MA${pLong}: ${fmtToken(Math.round(ma(closes, pLong)[n - 1] ?? lastClose ?? 0))}`, MA20_C],
+    ...(boll !== null ? [['BOLL(20,2)', BOLL_C] as [string, string]] : []),
   ]
   for (const [t, c] of legend) {
     ctx.fillStyle = c
@@ -958,9 +1204,99 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
     lx += ctx.measureText(t).width + 14
   }
 
+  if (pane !== null) {
+    drawIndicatorPane(ctx, { padL, padT, W, padR, volTop, volH, plotW, X, bw, pane })
+  } else {
+    drawLocPane(ctx, { W, padL, padR, volTop, volH, X, bw, candles, crash, pulse, pShort, pMid })
+  }
+
+  // 重构日标注（DSH001）
+  if (crash) {
+    const bx = X(n - 1)
+    if (pane === null) {
+      ctx.textAlign = 'right'
+      ctx.font = 'bold 12px "PingFang SC", "Noto Sans SC", sans-serif'
+      ctx.save()
+      ctx.shadowColor = DOWN_BRIGHT
+      ctx.shadowBlur = 10
+      ctx.fillStyle = DOWN_BRIGHT
+      ctx.fillText('-10,000 行 · 一砸到底', bx - 12, volTop + 26)
+      ctx.restore()
+      ctx.strokeStyle = DOWN_BRIGHT
+      ctx.lineWidth = 1.4
+      ctx.beginPath()
+      ctx.moveTo(bx - 14, volTop + 32)
+      ctx.lineTo(bx - 2, volTop + 10)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(bx - 2, volTop + 10)
+      ctx.lineTo(bx - 10, volTop + 12)
+      ctx.moveTo(bx - 2, volTop + 10)
+      ctx.lineTo(bx - 4, volTop + 19)
+      ctx.stroke()
+      ctx.lineWidth = 1
+      ctx.font = MONO
+    }
+
+    ctx.textAlign = 'right'
+    ctx.fillStyle = 'rgba(255,91,91,.85)'
+    ctx.font = 'bold 10px "PingFang SC", sans-serif'
+    const lastK = candles[n - 1]
+    if (lastK !== undefined) ctx.fillText('万行重构 ▲', bx - 4, Y(lastK.h) + 10)
+    ctx.font = MONO
+  }
+
+  // 十字光标
+  if (hover >= 0 && hover < n) {
+    const k = candles[hover]
+    if (k !== undefined) {
+      const x = X(hover)
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = 'rgba(200,210,230,.5)'
+      ctx.beginPath()
+      ctx.moveTo(x, padT)
+      ctx.lineTo(x, volTop + volH)
+      ctx.stroke()
+      const cy = Y(k.c)
+      ctx.beginPath()
+      ctx.moveTo(padL, cy)
+      ctx.lineTo(W - padR, cy)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = '#2a3450'
+      ctx.fillRect(2, cy - 8, padL - 4, 16)
+      ctx.fillStyle = '#d7dde9'
+      ctx.textAlign = 'left'
+      ctx.fillText(fmtToken(Math.round(k.c)), 5, cy)
+    }
+  }
+
+  return { lo, hi }
+}
+
+/** 代码量子图（默认副图：红=增行，绿=删行，附 MA）。 */
+function drawLocPane(
+  ctx: CanvasRenderingContext2D,
+  o: {
+    W: number; padL: number; padR: number; volTop: number; volH: number
+    X: (i: number) => number; bw: number
+    candles: readonly Candle[]; crash: boolean; pulse: boolean
+    pShort: number; pMid: number
+  },
+): void {
+  const { W, padL, volTop, volH, X, bw, candles, crash, pulse, pShort, pMid } = o
+  const n = candles.length
+  const maxLoc = Math.max(...candles.map((k) => Math.abs(k.loc)), 1)
+  ctx.textAlign = 'left'
+  ctx.fillStyle = AXIS
+  ctx.fillText(fmt(maxLoc), 5, volTop + 5)
+  ctx.fillText(fmt(Math.round(maxLoc / 2)), 5, volTop + volH / 2)
+  ctx.fillText('0', 5, volTop + volH - 4)
+
   // 代码变更柱（GitHub 风格：红=增行，绿=删行）
   for (let i = 0; i < n; i++) {
     const k = candles[i]
+    if (k === undefined) continue
     const col = k.loc >= 0 ? UP : DOWN
     const bh = Math.max(1, (Math.abs(k.loc) / maxLoc) * volH)
     if (i === n - 1 && crash && pulse) {
@@ -978,7 +1314,7 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
 
   // 代码量均线
   const locs = candles.map((k) => k.loc)
-  const drawVMA = (arr: (number | null)[], col: string) => {
+  const drawVMA = (arr: readonly (number | null)[], col: string) => {
     ctx.strokeStyle = col
     ctx.beginPath()
     let started = false
@@ -1002,7 +1338,7 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
   // 子图图例
   ctx.fillStyle = AXIS
   ctx.fillText(`变更量(${pShort},${pMid})`, padL + 2, volTop + 9)
-  const lastLoc = candles[n - 1].loc
+  const lastLoc = candles[n - 1]?.loc ?? 0
   const lastLocLabel = `${lastLoc >= 0 ? '+' : ''}${fmt(lastLoc)}行`
   let vx = padL + 2 + ctx.measureText(`变更量(${pShort},${pMid})`).width + 10
   ctx.fillStyle = '#d7dde9'
@@ -1013,62 +1349,115 @@ function drawCandleView(ctx: CanvasRenderingContext2D, o: CandleViewOpts) {
   vx += ctx.measureText(`MA${pShort}: ${fmt(Math.round(ma(locs, pShort)[n - 1] ?? 0))}`).width + 10
   ctx.fillStyle = MA10_C
   ctx.fillText(`MA${pMid}: ${fmt(Math.round(ma(locs, pMid)[n - 1] ?? 0))}`, vx, volTop + 9)
+  void W
+}
 
-  // 重构日标注（DSH001）
-  if (crash) {
-    const bx = X(n - 1)
-    ctx.textAlign = 'right'
-    ctx.font = 'bold 12px "PingFang SC", "Noto Sans SC", sans-serif'
-    ctx.save()
-    ctx.shadowColor = DOWN_BRIGHT
-    ctx.shadowBlur = 10
-    ctx.fillStyle = DOWN_BRIGHT
-    ctx.fillText('-10,000 行 · 一砸到底', bx - 12, volTop + 26)
-    ctx.restore()
-    ctx.strokeStyle = DOWN_BRIGHT
-    ctx.lineWidth = 1.4
-    ctx.beginPath()
-    ctx.moveTo(bx - 14, volTop + 32)
-    ctx.lineTo(bx - 2, volTop + 10)
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(bx - 2, volTop + 10)
-    ctx.lineTo(bx - 10, volTop + 12)
-    ctx.moveTo(bx - 2, volTop + 10)
-    ctx.lineTo(bx - 4, volTop + 19)
-    ctx.stroke()
-    ctx.lineWidth = 1
-    ctx.font = MONO
+/** MACD / KDJ 副图（替换代码量子图，风格对齐真实行情终端）。 */
+function drawIndicatorPane(
+  ctx: CanvasRenderingContext2D,
+  o: {
+    padL: number; padT: number; W: number; padR: number
+    volTop: number; volH: number; plotW: number
+    X: (i: number) => number; bw: number
+    pane: IndicatorPane
+  },
+): void {
+  const { padL, W, padR, volTop, volH, X, bw, pane } = o
+  const n = pane.a.length
+  if (n === 0) return
 
-    ctx.textAlign = 'right'
-    ctx.fillStyle = 'rgba(255,91,91,.85)'
-    ctx.font = 'bold 10px "PingFang SC", sans-serif'
-    const lastK = candles[n - 1]
-    ctx.fillText('万行重构 ▲', bx - 4, Y(lastK.h) + 10)
-    ctx.font = MONO
+  let lo: number
+  let hi: number
+  if (pane.kind === 'macd') {
+    // 对称标尺（围绕 0），柱线共用
+    let maxAbs = 1e-6
+    for (const arr of [pane.a, pane.b, pane.c]) {
+      for (const v of arr) maxAbs = Math.max(maxAbs, Math.abs(v))
+    }
+    lo = -maxAbs
+    hi = maxAbs
+  } else {
+    // KDJ：J 可越出 0~100，取序列极值并保底
+    lo = 0
+    hi = 100
+    for (const arr of [pane.a, pane.b, pane.c]) {
+      for (const v of arr) {
+        lo = Math.min(lo, v)
+        hi = Math.max(hi, v)
+      }
+    }
+  }
+  const span = hi - lo || 1
+  const Y = (v: number) => volTop + ((hi - v) / span) * volH
+
+  // 轴刻度
+  ctx.textAlign = 'left'
+  ctx.fillStyle = AXIS
+  ctx.fillText(pane.kind === 'macd' ? fmtToken(Math.round(hi)) : hi.toFixed(0), 5, volTop + 5)
+  ctx.fillText(pane.kind === 'macd' ? '0' : ((hi + lo) / 2).toFixed(0), 5, Y((hi + lo) / 2))
+  ctx.fillText(pane.kind === 'macd' ? fmtToken(Math.round(lo)) : lo.toFixed(0), 5, volTop + volH - 4)
+
+  // 零轴 / 中轴参考线
+  ctx.strokeStyle = GRID
+  ctx.setLineDash([3, 3])
+  ctx.beginPath()
+  const midY = pane.kind === 'macd' ? Y(0) : Y(50)
+  ctx.moveTo(padL, midY)
+  ctx.lineTo(W - padR, midY)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  // MACD 柱（红涨绿跌）
+  if (pane.kind === 'macd') {
+    const zero = Y(0)
+    for (let i = 0; i < n; i++) {
+      const v = pane.c[i] ?? 0
+      ctx.fillStyle = v >= 0 ? UP : DOWN
+      const y = Y(v)
+      const top = Math.min(y, zero)
+      const h = Math.max(1, Math.abs(y - zero))
+      ctx.fillRect(X(i) - bw * 0.3, top, bw * 0.6, h)
+    }
   }
 
-  // 十字光标
-  if (hover >= 0 && hover < n) {
-    const k = candles[hover]
-    const x = X(hover)
-    ctx.setLineDash([4, 4])
-    ctx.strokeStyle = 'rgba(200,210,230,.5)'
+  const drawPaneLine = (arr: readonly number[], col: string) => {
+    ctx.strokeStyle = col
+    ctx.lineWidth = 1.1
     ctx.beginPath()
-    ctx.moveTo(x, padT)
-    ctx.lineTo(x, volTop + volH)
+    for (let i = 0; i < arr.length; i++) {
+      const x = X(i)
+      const y = Y(arr[i] ?? 0)
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
     ctx.stroke()
-    const cy = Y(k.c)
-    ctx.beginPath()
-    ctx.moveTo(padL, cy)
-    ctx.lineTo(W - padR, cy)
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = '#2a3450'
-    ctx.fillRect(2, cy - 8, padL - 4, 16)
-    ctx.fillStyle = '#d7dde9'
-    ctx.textAlign = 'left'
-    ctx.fillText(fmtToken(Math.round(k.c)), 5, cy)
+    ctx.lineWidth = 1
+  }
+  drawPaneLine(pane.a, MA5_C)
+  drawPaneLine(pane.b, MA10_C)
+  if (pane.kind === 'kdj') drawPaneLine(pane.c, MA20_C)
+
+  // 子图图例
+  ctx.textAlign = 'left'
+  const last = n - 1
+  const items: [string, string][] = pane.kind === 'macd'
+    ? [
+        ['MACD(12,26,9)', AXIS],
+        [`DIF ${fmtToken(pane.a[last] ?? 0)}`, MA5_C],
+        [`DEA ${fmtToken(pane.b[last] ?? 0)}`, MA10_C],
+        [`HIST ${fmtToken(pane.c[last] ?? 0)}`, (pane.c[last] ?? 0) >= 0 ? UP_BRIGHT : DOWN_BRIGHT],
+      ]
+    : [
+        ['KDJ(9,3,3)', AXIS],
+        [`K ${(pane.a[last] ?? 0).toFixed(1)}`, MA5_C],
+        [`D ${(pane.b[last] ?? 0).toFixed(1)}`, MA10_C],
+        [`J ${(pane.c[last] ?? 0).toFixed(1)}`, MA20_C],
+      ]
+  let vx = padL + 2
+  for (const [t, c] of items) {
+    ctx.fillStyle = c
+    ctx.fillText(t, vx, volTop + 9)
+    vx += ctx.measureText(t).width + 10
   }
 }
 
@@ -1095,7 +1484,7 @@ interface LineViewOpts {
   livePrice: number | null
 }
 
-function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
+function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts): PriceScale | null {
   const { W, padL, padR, padT, mainH, volTop, volH, plotW, points, intraday, crash, hover, baseMinute, livePrice } = o
   if (points.length === 0) {
     // 空数据不再只是空白画布：给出明确的等待/暂无提示
@@ -1112,7 +1501,7 @@ function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
       padT + mainH / 2,
     )
     ctx.restore()
-    return
+    return null
   }
   const n = points.length
   const slot = plotW / n
@@ -1207,6 +1596,7 @@ function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
       ctx.stroke()
       if (d < dayCount) {
         const pt = points[Math.floor((d / dayCount) * n + n / (dayCount * 2))]
+        if (pt === undefined) continue
         ctx.fillStyle = AXIS
         const dt = new Date(pt.t)
         ctx.fillText(`${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`, x + plotW / (dayCount * 2), o.H - 7)
@@ -1217,6 +1607,7 @@ function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
   // 代码变更柱（红=增行，绿=删行）
   for (let i = 0; i < n; i++) {
     const p = points[i]
+    if (p === undefined) continue
     const col = p.vol >= 0 ? UP : DOWN
     const bh = Math.max(1, (Math.abs(p.vol) / maxVol) * volH)
     ctx.fillStyle = col
@@ -1229,7 +1620,7 @@ function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
   ctx.beginPath()
   for (let i = 0; i < n; i++) {
     const x = X(i)
-    const y = Y(points[i].avg)
+    const y = Y(points[i]?.avg ?? 0)
     if (i === 0) ctx.moveTo(x, y)
     else ctx.lineTo(x, y)
   }
@@ -1243,7 +1634,7 @@ function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
   ctx.beginPath()
   for (let i = 0; i < n; i++) {
     const x = X(i)
-    const y = Y(points[i].p)
+    const y = Y(points[i]?.p ?? 0)
     if (i === 0) ctx.moveTo(x, y)
     else ctx.lineTo(x, y)
   }
@@ -1288,23 +1679,27 @@ function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts) {
   // 十字光标
   if (hover >= 0 && hover < n) {
     const p = points[hover]
-    const x = X(hover)
-    const cy = Y(p.p)
-    ctx.setLineDash([4, 4])
-    ctx.strokeStyle = 'rgba(200,210,230,.5)'
-    ctx.beginPath()
-    ctx.moveTo(x, padT)
-    ctx.lineTo(x, volTop + volH)
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(padL, cy)
-    ctx.lineTo(W - padR, cy)
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = '#2a3450'
-    ctx.fillRect(2, cy - 8, padL - 4, 16)
-    ctx.fillStyle = '#d7dde9'
-    ctx.textAlign = 'left'
-    ctx.fillText(fmtToken(Math.round(p.p)), 5, cy)
+    if (p !== undefined) {
+      const x = X(hover)
+      const cy = Y(p.p)
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = 'rgba(200,210,230,.5)'
+      ctx.beginPath()
+      ctx.moveTo(x, padT)
+      ctx.lineTo(x, volTop + volH)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(padL, cy)
+      ctx.lineTo(W - padR, cy)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = '#2a3450'
+      ctx.fillRect(2, cy - 8, padL - 4, 16)
+      ctx.fillStyle = '#d7dde9'
+      ctx.textAlign = 'left'
+      ctx.fillText(fmtToken(Math.round(p.p)), 5, cy)
+    }
   }
+
+  return { lo, hi }
 }
