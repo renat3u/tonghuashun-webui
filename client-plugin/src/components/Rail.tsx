@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { fmtToken, fmtPct, dirClass } from '../lib/format'
 import type { MarketEngine } from '../lib/useMarketEngine'
 import type { WorkspaceRow } from '../lib/workspace'
+import { useDismissable } from '../lib/useDismissable'
 import type { TerminalPanelKind } from '../contract'
 import { Icon, type IconName } from './icons'
 
@@ -39,6 +40,8 @@ const NAV: { label: string; icon: IconName; active?: boolean; title: string; pan
 
 export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspacesReady = false, collapsed = false, onToggleCollapse, onNotice, onOpenPanel, favoriteCodes, onToggleFavorite, onClearFavorites }: Props) {
   const [favMenuOpen, setFavMenuOpen] = useState(false)
+  const favGearRef = useRef<HTMLDivElement>(null)
+  useDismissable(favMenuOpen, favGearRef, () => setFavMenuOpen(false))
   const realRows = workspaceRows ?? []
   const showEmpty = realWorkspacesReady && realRows.length === 0
   const watchList = realRows.length > 0
@@ -46,7 +49,7 @@ export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspaces
         code: row.code,
         name: row.name,
         last: row.tokens,
-        pct: 0,
+        pct: row.pct,
         running: row.running,
         sessions: row.sessions,
         toolCalls: row.toolCalls,
@@ -65,6 +68,10 @@ export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspaces
           toolCalls: ins.commitCount,
         }
       })
+  // 自选置顶（稳定排序：自选之间/非自选之间保持原顺序）
+  const orderedList = favoriteCodes !== undefined && favoriteCodes.size > 0
+    ? [...watchList].sort((a, b) => Number(favoriteCodes.has(b.code)) - Number(favoriteCodes.has(a.code)))
+    : watchList
 
   return (
     <aside className={`rail${collapsed ? ' collapsed' : ''}`}>
@@ -103,7 +110,7 @@ export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspaces
       <div className="watch">
         <div className="watch-head">
           关注项目
-          <div className="fav-gear">
+          <div className="fav-gear" ref={favGearRef}>
             <button className="gear" title="自选设置" onClick={() => setFavMenuOpen((o) => !o)}>
               <Icon name="gear" size={12} />
             </button>
@@ -136,7 +143,7 @@ export function Rail({ engine, selected, onSelect, workspaceRows, realWorkspaces
               暂无工作区
             </div>
           )}
-          {watchList.map((ins) => {
+          {orderedList.map((ins) => {
             const cls = dirClass(ins.pct)
             const fav = favoriteCodes?.has(ins.code) === true
             return (

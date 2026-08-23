@@ -19,6 +19,12 @@ export interface WorkspaceRow {
   cwd: string
   /** meter 快照中的 Token 累计；无 meter 数据时为 0。 */
   tokens: number
+  /** 今日该工作区 Token 消耗（meter 日桶；无数据为 0）。 */
+  todayTokens: number
+  /** 昨日该工作区 Token 消耗（涨跌幅基准；无数据为 0）。 */
+  prevTokens: number
+  /** 今日消耗对昨日的环比（%）；无昨日数据为 0。 */
+  pct: number
   /** 工作区下会话数（meter 优先，缺失时用 session 列表计数）。 */
   sessions: number
   /** 工具调用次数。 */
@@ -40,17 +46,26 @@ export function buildWorkspaceRows(
   sessions: SessionListStateLike,
   live: Snapshot | null,
 ): WorkspaceRow[] {
+  // 涨跌幅基准：日桶序列的最后一天（今日）对前一天。今日尚无消耗时序列
+  // 末位就是昨日，环比自然退化为 0/上一对比，不合成数据。
+  const lastDay = live !== null ? live.daySeries[live.daySeries.length - 1] : undefined
+  const prevDay = live !== null ? live.daySeries[live.daySeries.length - 2] : undefined
   return workspaces.items.map((ws) => {
     const wsSessions = ws.sessionIds
       .map((id) => sessions.byId[id])
       .filter((s) => s !== undefined)
     const liveWs = live?.workspaces.find((w) => w.cwd === ws.path)
+    const todayTokens = lastDay?.byWorkspace[ws.path] ?? 0
+    const prevTokens = prevDay?.byWorkspace[ws.path] ?? 0
     return {
       id: ws.workspaceId,
       code: wsCode(ws.path),
       name: ws.title || wsName(ws.path),
       cwd: ws.path,
       tokens: liveWs?.tokens ?? 0,
+      todayTokens,
+      prevTokens,
+      pct: prevTokens > 0 ? ((todayTokens - prevTokens) / prevTokens) * 100 : 0,
       sessions: liveWs?.sessions ?? wsSessions.length,
       toolCalls: liveWs?.toolCalls ?? 0,
       running: wsSessions.some((s) => s.running),

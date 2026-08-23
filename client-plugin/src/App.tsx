@@ -68,13 +68,14 @@ function instrumentFromRow(row: WorkspaceRow): Instrument {
     name: row.name,
     sector: '工作区',
     hot: false,
-    prevToken: 0,
+    prevToken: row.prevTokens,
     last: row.tokens,
     open: row.tokens,
-    high: row.tokens,
-    low: row.tokens,
-    pct: 0,
-    change: 0,
+    high: Math.max(row.tokens, row.prevTokens),
+    // 无昨日数据时最低价不下探到 0：取当前值
+    low: row.prevTokens > 0 ? Math.min(row.tokens, row.prevTokens) : row.tokens,
+    pct: row.pct,
+    change: row.todayTokens - row.prevTokens,
     locDelta: 0,
     commitCount: row.toolCalls,
     locTotal: 0,
@@ -227,8 +228,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
         && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       if (e.key === '/' && !typing) {
         e.preventDefault()
-        const ta = document.querySelector<HTMLTextAreaElement>('.composer textarea')
-        ta?.focus()
+        window.dispatchEvent(new CustomEvent('ths:focus-composer'))
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && !typing) {
         e.preventDefault()
         const input = document.querySelector<HTMLInputElement>('.top-search input')
@@ -268,15 +268,9 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     return () => clearTimeout(timer)
   }, [notice])
 
-  /** 从技能面板选中技能：把 /name 写入 composer 并聚焦。 */
+  /** 从技能面板选中技能：把 /name 写进 composer 并聚焦（TerminalChat 监听该事件）。 */
   const insertSkill = (name: string) => {
-    const ta = document.querySelector<HTMLTextAreaElement>('.composer textarea')
-    if (ta !== null) {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(ta, `/${name} `)
-      ta.dispatchEvent(new Event('input', { bubbles: true }))
-      ta.focus()
-    }
+    window.dispatchEvent(new CustomEvent('ths:insert-composer', { detail: `/${name} ` }))
     setPanel(null)
   }
 

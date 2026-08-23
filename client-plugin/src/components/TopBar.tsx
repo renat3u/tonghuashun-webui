@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { fmt, fmtPct, dirClass } from '../lib/format'
 import type { MarketEngine } from '../lib/useMarketEngine'
 import { joinWorkspacePath, type WorkspaceRow } from '../lib/workspace'
+import { useDismissable } from '../lib/useDismissable'
 import type { FileReferenceCandidateLike, SessionListStateLike } from '../contract'
 import { Icon } from './icons'
 
@@ -46,16 +47,12 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, s
   const [sessOpen, setSessOpen] = useState(false)
   const [fileResults, setFileResults] = useState<readonly FileReferenceCandidateLike[] | null>(null)
   const [fileScanning, setFileScanning] = useState(false)
-  const boxRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLDivElement>(null)
+  const sessRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const close = () => {
-      setSessOpen(false)
-      setFocused(false)
-    }
-    window.addEventListener('ths:close-popovers', close)
-    return () => window.removeEventListener('ths:close-popovers', close)
-  }, [])
+  // Esc / 点击外部：关闭搜索结果与会话下拉
+  useDismissable(focused, searchRef, () => setFocused(false))
+  useDismissable(sessOpen, sessRef, () => setSessOpen(false))
 
   // 真实文件索引：防抖异步搜索；独立运行（searchFiles 缺省）时不启动。
   useEffect(() => {
@@ -107,7 +104,7 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, s
     if (realRows.length > 0) {
       for (const row of realRows) {
         if (row.name.toLowerCase().includes(kw) || row.code.toLowerCase().includes(kw) || row.cwd.toLowerCase().includes(kw)) {
-          hits.push({ kind: 'workspace', code: row.code, name: row.name, sub: row.cwd, last: row.tokens, pct: 0 })
+          hits.push({ kind: 'workspace', code: row.code, name: row.name, sub: row.cwd, last: row.tokens, pct: row.pct })
         }
       }
     } else {
@@ -211,8 +208,8 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, s
         ))}
       </div>
       <div className="spacer" />
-      <div className="top-search">
-        <div className="box" ref={boxRef}>
+      <div className="top-search" ref={searchRef}>
+        <div className="box">
           <Icon name="search" size={12} />
           <input
             value={q}
@@ -259,7 +256,7 @@ export function TopBar({ engine, onSelect, sessions, workspaceRows, modelRows, s
           </div>
         )}
       </div>
-      <div className="sess-switch">
+      <div className="sess-switch" ref={sessRef}>
         <button className="sess-btn" title="切换会话" onClick={() => setSessOpen((o) => !o)}>
           <Icon name="assistant" size={12} />
           {currentLabel}

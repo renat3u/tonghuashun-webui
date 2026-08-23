@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useDismissable } from '../lib/useDismissable'
 import type { PluginEntryLike, SkillEntryLike, TerminalPanelKind } from '../contract'
 
 interface Props {
@@ -15,7 +16,8 @@ type PanelState =
   | { status: 'error'; message: string }
   | { status: 'skills'; items: readonly SkillEntryLike[] }
   | { status: 'plugins'; items: readonly PluginEntryLike[] }
-  | { status: 'settings'; opened: boolean }
+  /** opened: null = 尚未尝试打开（等用户显式点击），true/false = 打开结果。 */
+  | { status: 'settings'; opened: boolean | null }
 
 const TITLES: Record<TerminalPanelKind, string> = {
   skills: '技能',
@@ -25,6 +27,8 @@ const TITLES: Record<TerminalPanelKind, string> = {
 
 export function TerminalPanel({ kind, onClose, listSkills, listPlugins, openSettingsDocument, onInsertSkill }: Props) {
   const [state, setState] = useState<PanelState>({ status: 'loading' })
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDismissable(true, panelRef, onClose)
 
   useEffect(() => {
     let alive = true
@@ -56,17 +60,9 @@ export function TerminalPanel({ kind, onClose, listSkills, listPlugins, openSett
         }
         return
       }
+      // 设置面板不再在打开时就触发外部副作用：等待用户显式点击。
       if (kind === 'settings') {
-        if (openSettingsDocument === undefined) {
-          if (alive) setState({ status: 'settings', opened: false })
-          return
-        }
-        try {
-          const opened = await openSettingsDocument()
-          if (alive) setState({ status: 'settings', opened })
-        } catch {
-          if (alive) setState({ status: 'settings', opened: false })
-        }
+        if (alive) setState({ status: 'settings', opened: null })
       }
     }
     void load()
@@ -75,9 +71,22 @@ export function TerminalPanel({ kind, onClose, listSkills, listPlugins, openSett
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind])
 
+  const openSettings = async () => {
+    if (openSettingsDocument === undefined) {
+      setState({ status: 'settings', opened: false })
+      return
+    }
+    try {
+      const opened = await openSettingsDocument()
+      setState({ status: 'settings', opened })
+    } catch {
+      setState({ status: 'settings', opened: false })
+    }
+  }
+
   return (
     <div className="ths-panel-overlay" onClick={onClose}>
-      <div className="ths-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="ths-panel" ref={panelRef} onClick={(e) => e.stopPropagation()}>
         <div className="ths-panel-head">
           <b>{TITLES[kind]}</b>
           <button className="ths-panel-close" onClick={onClose} aria-label="关闭">
@@ -125,9 +134,18 @@ export function TerminalPanel({ kind, onClose, listSkills, listPlugins, openSett
           )}
           {state.status === 'settings' && (
             <div className="ths-panel-hint">
-              {state.opened
-                ? '已在系统默认应用中打开 DSH 设置文档。'
-                : '未能打开设置文档（独立运行模式或当前环境未提供该入口）。'}
+              {state.opened === null && (
+                <>
+                  <div>DSH 设置以文档形式维护，将在系统默认应用中打开。</div>
+                  <div className="queue-actions" style={{ marginTop: 10 }}>
+                    <button className="cp-action" onClick={() => void openSettings()}>
+                      打开设置文档
+                    </button>
+                  </div>
+                </>
+              )}
+              {state.opened === true && '已在系统默认应用中打开 DSH 设置文档。'}
+              {state.opened === false && '未能打开设置文档（独立运行模式或当前环境未提供该入口）。'}
             </div>
           )}
         </div>

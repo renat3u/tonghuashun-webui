@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fmt, fmtToken, fmtPct, dirClass } from '../lib/format'
 import type { ChangeRow, FlowRow, Instrument, TapeRow, TreeRow } from '../lib/market'
 import type { MarketEngine } from '../lib/useMarketEngine'
 import type { SnapshotModelDetail } from '../bridge/snapshot'
 import { joinWorkspacePath } from '../lib/workspace'
+import { useDismissable } from '../lib/useDismissable'
 import { Icon } from './icons'
 
 interface Props {
@@ -56,6 +57,27 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
   const [tab, setTab] = useState<PanelTab>('changes')
   const [hideTape, setHideTape] = useState(false)
   const [detail, setDetail] = useState<{ title: string; lines: ReadonlyArray<readonly [string, string]>; path?: string; diff?: string } | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const detailRef = useRef<HTMLDivElement>(null)
+  useDismissable(detail !== null, detailRef, () => setDetail(null))
+
+  // 操作反馈自动消失
+  useEffect(() => {
+    if (notice === null) return
+    const timer = setTimeout(() => setNotice(null), 2400)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  /** 复制路径到剪贴板并给出结果反馈（部分环境无剪贴板权限）。 */
+  const copyPath = async (path: string) => {
+    try {
+      if (navigator.clipboard === undefined) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(path)
+      setNotice('已复制路径')
+    } catch {
+      setNotice('复制失败：当前环境不支持剪贴板')
+    }
+  }
   const q = engine.quotes.get(instrument.code)
   const last = q?.last ?? instrument.last
   const pct = q?.pct ?? instrument.pct
@@ -68,7 +90,7 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
     : path
 
   return (
-    <aside className="quote">
+    <aside className={`quote${pinned ? ' pinned' : ''}`}>
       <div className="q-head">
         <div className="q-title">
           <span className="nm">{instrument.name}</span>
@@ -336,6 +358,11 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
 
       {tab === 'flow' && (
         <div className="changes" style={{ paddingBottom: 8 }}>
+          {tokenFlow.length === 0 && (
+            <div className="step-zh" style={{ padding: '8px 14px', color: 'var(--faint)', fontSize: 10.5 }}>
+              {engine.live ? '暂无今日模型流向数据：今天还没有模型消耗记录。' : '暂无流向数据。'}
+            </div>
+          )}
           {tokenFlow.map((f) => {
             const detail = modelDetail?.[f.name]
             return (
@@ -398,9 +425,11 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
         </div>
       )}
 
+      {notice !== null && <div className="quote-notice">{notice}</div>}
+
       {detail !== null && (
         <div className="ths-panel-overlay" onClick={() => setDetail(null)}>
-          <div className="ths-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="ths-panel" ref={detailRef} onClick={(e) => e.stopPropagation()}>
             <div className="ths-panel-head">
               <b>{detail.title}</b>
               <button className="ths-panel-close" onClick={() => setDetail(null)} aria-label="关闭">
@@ -428,7 +457,7 @@ export function QuotePanel({ engine, instrument, tape, changes, tokenFlow, gitTr
                     className="cp-action ghost"
                     onClick={() => {
                       setDetail(null)
-                      void navigator.clipboard?.writeText(detail.path as string)
+                      void copyPath(detail.path as string)
                     }}
                   >
                     复制路径
