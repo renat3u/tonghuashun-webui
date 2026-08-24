@@ -28,7 +28,7 @@ const MAX_DIFF_ROWS = 6
 const DIFF_MAX_CHARS = 2600
 /** LOC history window (days). */
 const LOC_WINDOW_DAYS = 180
-/** Cache TTL for successful reads. */
+/** Cache TTL for successful reads (also the HEAD re-check interval). */
 const DEFAULT_TTL_MS = 30_000
 /** Negative-cache TTL (not a git repository / git failure). */
 const FAILURE_TTL_MS = 60_000
@@ -210,9 +210,16 @@ function truncateDiff(text: string): string {
   return `${text.slice(0, DIFF_MAX_CHARS)}\n…(截断)`
 }
 
-/** Cached, per-workspace git view with in-flight deduplication. */
+/**
+ * Cached, per-workspace git view with in-flight deduplication.
+ *
+ * The TTL only governs how often `git rev-parse HEAD` runs (cheap); the
+ * expensive `git log --numstat` re-read happens only when HEAD actually moved.
+ * Committing is the only thing that changes committed history, so a large
+ * repository is no longer re-walked every TTL window.
+ */
 export class WorkspaceGitIndex {
-  private readonly cache = new Map<string, { at: number; value: WorkspaceGitView }>()
+  private readonly cache = new Map<string, { at: number; head: string | null; value: WorkspaceGitView }>()
   private readonly failures = new Map<string, { at: number }>()
   private readonly inflight = new Map<string, Promise<WorkspaceGitView | null>>()
 
@@ -221,10 +228,22 @@ export class WorkspaceGitIndex {
     private readonly git: GitRunner = runGit,
   ) {}
 
-  /** Read (or serve from cache) the git view for one workspace; null = unavailable. */
+  /**
+   * Read (or serve from cache) the git view for one workspace; null = unavailable.
+   * `now` is the caller's clock (the snapshot's `generatedAt`) and is used for
+   * both TTL checks and cache stamps, so the two never disagree.
+   */
   async view(cwd: string, now = Date.now()): Promise<WorkspaceGitView | null> {
     const hit = this.cache.get(cwd)
-    if (hit !== undefined && now - hit.at < this.ttlMs) return hit.value
+    if (hit !== undefined) {
+      if (now - hit.at < this.ttlMs) return hit.value
+      // TTL elapsed: only the HEAD fingerprint is re-read, not the whole log.
+      const head = await this.readHead(cwd)
+      if (head !== null && head === hit.head) {
+        hit.at = now
+        return hit.value
+      }
+    }
     const miss = this.failures.get(cwd)
     if (miss !== undefined && now - miss.at < FAILURE_TTL_MS) return null
     let pending = this.inflight.get(cwd)
@@ -234,9 +253,10 @@ export class WorkspaceGitIndex {
     }
     const value = await pending
     if (value === null) {
-      this.failures.set(cwd, { at: Date.now() })
+      this.failures.set(cwd, { at: now })
+      this.cache.delete(cwd)
     } else {
-      this.cache.set(cwd, { at: Date.now(), value })
+      this.cache.set(cwd, { at: now, head: await this.readHead(cwd), value })
     }
     return value
   }
@@ -250,6 +270,14 @@ export class WorkspaceGitIndex {
     }
     this.cache.delete(cwd)
     this.failures.delete(cwd)
+  }
+
+  /** Current commit id; null when unavailable (not a repo / no commits). */
+  private async readHead(cwd: string): Promise<string | null> {
+    const text = await this.git(cwd, ['rev-parse', 'HEAD'])
+    if (text === null) return null
+    const head = text.trim()
+    return head.length > 0 ? head : null
   }
 
   private async collect(cwd: string): Promise<WorkspaceGitView | null> {

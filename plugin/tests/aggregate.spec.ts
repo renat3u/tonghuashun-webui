@@ -141,3 +141,39 @@ test('重复折叠同一会话的同一天不重复计 sessions', () => {
   const snap = agg.snapshot(Date.now())
   assert.equal(snap.today?.sessions, 2)
 })
+
+test('分钟桶按天隔离：历史同一时刻不叠加到今日分时', () => {
+  const agg = new UsageAggregator()
+  // 昨天 10:30 与今天 10:30：分时只应该反映今天那一笔
+  agg.fold(record({ ts: atLocal(10, 30, -1), sessionId: 'a', inputTokens: 500, outputTokens: 0 }))
+  agg.fold(record({ ts: atLocal(10, 30), sessionId: 'b', inputTokens: 100, outputTokens: 0 }))
+  const snap = agg.snapshot(Date.now())
+  assert.equal(snap.minuteSeries.length, 1)
+  assert.equal(snap.minuteSeries[0]?.minute, '10:30')
+  assert.equal(snap.minuteSeries[0]?.tokens, 100)
+  // 昨天那笔仍在日线里，只是不进今日分时
+  assert.equal(snap.daySeries.length, 2)
+  assert.equal(snap.totalTokens, 600)
+})
+
+test('分钟序列按时间升序且只含当天', () => {
+  const agg = new UsageAggregator()
+  agg.fold(record({ ts: atLocal(15, 5), sessionId: 'a', inputTokens: 10, outputTokens: 0 }))
+  agg.fold(record({ ts: atLocal(9, 5), sessionId: 'a', inputTokens: 20, outputTokens: 0 }))
+  agg.fold(record({ ts: atLocal(23, 59, -2), sessionId: 'a', inputTokens: 30, outputTokens: 0 }))
+  const snap = agg.snapshot(Date.now())
+  assert.deepEqual(snap.minuteSeries.map((m) => m.minute), ['09:05', '15:05'])
+})
+
+test('工作区会话数按 distinct session 统计（不再恒为 1）', () => {
+  const agg = new UsageAggregator()
+  agg.fold(record({ ts: atLocal(9, 0), sessionId: 's1', cwd: '/w1' }))
+  agg.fold(record({ ts: atLocal(9, 1), sessionId: 's2', cwd: '/w1' }))
+  agg.fold(record({ ts: atLocal(9, 2), sessionId: 's3', cwd: '/w1' }))
+  // 同一会话再次消耗不增加计数
+  agg.fold(record({ ts: atLocal(9, 3), sessionId: 's1', cwd: '/w1' }))
+  agg.fold(record({ ts: atLocal(9, 4), sessionId: 's9', cwd: '/w2' }))
+  const snap = agg.snapshot(Date.now())
+  assert.equal(snap.workspaces.find((w) => w.cwd === '/w1')?.sessions, 3)
+  assert.equal(snap.workspaces.find((w) => w.cwd === '/w2')?.sessions, 1)
+})

@@ -87,6 +87,10 @@ npm run backfill
 
 与前端视图的映射：`minuteSeries` → 分时成交（每分钟 Token 消耗），`daySeries` → 日 K，
 `workspaces` → 左栏关注项目，`today.byModel` → token 流向；
+
+> `minuteSeries` **只含当天**：分钟桶内部按「日期 + HH:MM」分桶，历史（含回填）不会
+> 叠加到今天的同一时刻；线上格式仍是裸 `HH:MM`。历史消耗体现在 `daySeries` 中。
+
 `workspaces[].changes` → 最近变更，`workspaces[].gitTree` → git tree，
 `workspaces[].locSeries` → K 线子图的代码量柱。
 

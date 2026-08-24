@@ -136,5 +136,6 @@ console.log(`usage records: ${recordCount}`)
 console.log(`tool calls: ${snap.today?.toolCalls ?? 0}`)
 console.log(`total tokens: ${snap.totalTokens}`)
 console.log(`day series: ${snap.daySeries.length}`)
-console.log(`minute series: ${snap.minuteSeries.length}`)
+// 分钟桶按天隔离后，快照只暴露当天分钟序列（历史仍在日线里）
+console.log(`today minute buckets: ${snap.minuteSeries.length}`)
 console.log('backfill complete')

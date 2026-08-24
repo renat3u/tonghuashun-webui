@@ -68,18 +68,30 @@ export function apply(ctx: Context, config: Config = {}): () => void {
   // Boot: replay the raw usage log when present (token/minutes/models source of
   // truth), then merge only tool-call counters from days.json to avoid double
   // counting. If no usage log exists, fall back to persisted day aggregates.
+  //
+  // Live events that arrive while the replay is still reading are buffered, not
+  // folded: a record appended before `loadUsage()` resolves would also appear in
+  // the file it reads and be counted twice.
+  let replaying = true
+  const pending: MeterSession[] = []
   void (async () => {
-    const [days, usage] = await Promise.all([store.loadDays(), store.loadUsage()])
-    if (usage.length > 0) {
-      for (const record of usage) aggregator.fold(record)
-      for (const day of days) aggregator.foldDayToolCalls(day)
-    } else {
-      for (const day of days) aggregator.foldDay(day)
+    try {
+      const [days, usage] = await Promise.all([store.loadDays(), store.loadUsage()])
+      if (usage.length > 0) {
+        for (const record of usage) aggregator.fold(record)
+        for (const day of days) aggregator.foldDayToolCalls(day)
+      } else {
+        for (const day of days) aggregator.foldDay(day)
+      }
+    } finally {
+      replaying = false
+      for (const session of pending.splice(0)) consume(session)
+      store.commitDays(aggregator.dayRows())
     }
-    store.commitDays(aggregator.dayRows())
   })()
 
-  const disposeEvent = ctx.on('session/event', (session: MeterSession) => {
+  /** Fold a session's new events into the aggregator and durable log. */
+  function consume(session: MeterSession): void {
     // First sight starts at the current log tail: everything already durable
     // was captured by an earlier run of the plugin (or predates it).
     let cursor = cursors.get(session)
@@ -102,6 +114,17 @@ export function apply(ctx: Context, config: Config = {}): () => void {
       },
     )
     store.commitDays(aggregator.dayRows())
+  }
+
+  const disposeEvent = ctx.on('session/event', (session: MeterSession) => {
+    if (replaying) {
+      // Record the cursor now so buffered sessions still start at the tail they
+      // had when first seen, then fold once the replay finishes.
+      if (!cursors.has(session)) cursors.set(session, { consumed: session.events.length })
+      if (!pending.includes(session)) pending.push(session)
+      return
+    }
+    consume(session)
   })
 
   // Web composition: serve the snapshot the terminal frontend consumes.

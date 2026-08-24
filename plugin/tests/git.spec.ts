@@ -129,6 +129,51 @@ test('WorkspaceGitIndex 读取真实仓库（git 可用时）', { skip: !hasGit 
   }
 })
 
+test('TTL 过期后 HEAD 未变只跑 rev-parse，不重走 git log', async () => {
+  const calls: string[][] = []
+  const runner = async (_cwd: string, args: readonly string[]) => {
+    calls.push([...args])
+    if (args[0] === 'rev-parse') return 'headsha1\n'
+    if (args[0] === 'log') return '\x1eh1\x1f1700000000\x1finit\n5\t1\ta.ts\n'
+    if (args[0] === 'show') return 'diff body'
+    return null
+  }
+  const index = new WorkspaceGitIndex(1000, runner)
+  const first = await index.view('/w', 0)
+  assert.ok(first)
+  const logCallsAfterFirst = calls.filter((c) => c[0] === 'log').length
+  assert.equal(logCallsAfterFirst, 1)
+
+  // TTL 内：完全命中缓存，不发起任何 git 调用
+  const before = calls.length
+  assert.equal(await index.view('/w', 500), first)
+  assert.equal(calls.length, before)
+
+  // TTL 过期但 HEAD 未变：只多一次 rev-parse，log 不再重走
+  const second = await index.view('/w', 5000)
+  assert.equal(second, first)
+  assert.equal(calls.filter((c) => c[0] === 'log').length, 1)
+  assert.ok(calls.filter((c) => c[0] === 'rev-parse').length >= 2)
+})
+
+test('HEAD 变化后重新读取提交历史', async () => {
+  let head = 'sha-a'
+  const calls: string[][] = []
+  const runner = async (_cwd: string, args: readonly string[]) => {
+    calls.push([...args])
+    if (args[0] === 'rev-parse') return `${head}\n`
+    if (args[0] === 'log') return '\x1eh1\x1f1700000000\x1finit\n5\t1\ta.ts\n'
+    if (args[0] === 'show') return 'diff body'
+    return null
+  }
+  const index = new WorkspaceGitIndex(1000, runner)
+  await index.view('/w', 0)
+  assert.equal(calls.filter((c) => c[0] === 'log').length, 1)
+  head = 'sha-b'
+  await index.view('/w', 5000)
+  assert.equal(calls.filter((c) => c[0] === 'log').length, 2)
+})
+
 test('WorkspaceGitIndex 对非 git 目录返回 null 并负缓存', { skip: !hasGit }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ths-nogit-'))
   try {

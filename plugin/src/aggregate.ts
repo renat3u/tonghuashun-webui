@@ -2,7 +2,10 @@
  * Pure aggregation over {@link UsageRecord}s: per-minute, per-day, per-workspace,
  * and per-model buckets, plus the snapshot shape the HTTP endpoint serves.
  *
- * Day keys are local-time 'YYYY-MM-DD'; minute keys are local 'HH:MM'.
+ * Day keys are local-time 'YYYY-MM-DD'; minute buckets are keyed by
+ * 'YYYY-MM-DD HH:MM' internally so replaying history cannot pile yesterday's
+ * 09:30 onto today's 09:30 — the snapshot exposes only the requested day's
+ * minutes, still as bare 'HH:MM' (wire format unchanged).
  * `foldDay` merges persisted day rows back into the live aggregator after a
  * restart, so the day series survives process boundaries. Workspace-level
  * session and tool-call counts live inside the day rows and merge with them.
@@ -22,11 +25,17 @@ export function dayKey(ts: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/** Internal minute bucket key: day-scoped so history never lands on today. */
+export function dayMinuteKey(ts: number): string {
+  return `${dayKey(ts)} ${minuteKey(ts)}`
+}
+
 export function todayKey(now: number): string {
   return dayKey(now)
 }
 
 export class UsageAggregator {
+  /** Keyed by {@link dayMinuteKey}; the snapshot slices out one day. */
   private readonly minutes = new Map<string, MinuteStat>()
   private readonly days = new Map<string, DayStat>()
   private readonly workspaces = new Map<string, WorkspaceStat>()
@@ -35,6 +44,8 @@ export class UsageAggregator {
   private readonly daySessions = new Map<string, Set<string>>()
   /** Per-day per-workspace distinct session ids. */
   private readonly dayWorkspaceSessions = new Map<string, Map<string, Set<string>>>()
+  /** Workspace cwd -> all distinct session ids seen live (workspace sessions count). */
+  private readonly workspaceSessionIds = new Map<string, Set<string>>()
   private total = 0
 
   private ensureDay(date: string): DayStat {
@@ -79,11 +90,12 @@ export class UsageAggregator {
   fold(record: UsageRecord): void {
     const date = dayKey(record.ts)
     const minute = minuteKey(record.ts)
+    const bucket = dayMinuteKey(record.ts)
     const tokens = record.inputTokens + record.outputTokens + record.cacheReadTokens + record.cacheWriteTokens + record.reasoningTokens
 
-    const m = this.minutes.get(minute)
+    const m = this.minutes.get(bucket)
     if (m === undefined) {
-      this.minutes.set(minute, { minute, tokens, inputTokens: record.inputTokens, outputTokens: record.outputTokens })
+      this.minutes.set(bucket, { minute, tokens, inputTokens: record.inputTokens, outputTokens: record.outputTokens })
     } else {
       m.tokens += tokens
       m.inputTokens += record.inputTokens
@@ -126,12 +138,21 @@ export class UsageAggregator {
       day.sessions += 1
     }
 
+    // Distinct sessions per workspace: a workspace running five sessions used
+    // to report 1 until a restart merged the persisted day rows.
+    let wsSessionIds = this.workspaceSessionIds.get(cwd)
+    if (wsSessionIds === undefined) {
+      wsSessionIds = new Set()
+      this.workspaceSessionIds.set(cwd, wsSessionIds)
+    }
+    wsSessionIds.add(record.sessionId)
+
     const ws = this.workspaces.get(cwd)
     if (ws === undefined) {
-      this.workspaces.set(cwd, { cwd, tokens, sessions: 1, toolCalls: 0 })
+      this.workspaces.set(cwd, { cwd, tokens, sessions: wsSessionIds.size, toolCalls: 0 })
     } else {
       ws.tokens += tokens
-      ws.sessions = Math.max(ws.sessions, 1)
+      ws.sessions = Math.max(ws.sessions, wsSessionIds.size)
     }
 
     if (record.model !== undefined) {
@@ -247,14 +268,27 @@ export class UsageAggregator {
     return [...this.days.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
   }
 
+  /** One day's minute series, ascending ('HH:MM' as on the wire). */
+  minuteRows(date: string): MinuteStat[] {
+    const prefix = `${date} `
+    const rows: MinuteStat[] = []
+    for (const [key, stat] of this.minutes) {
+      if (key.startsWith(prefix)) rows.push(stat)
+    }
+    return rows.sort((a, b) => (a.minute < b.minute ? -1 : a.minute > b.minute ? 1 : 0))
+  }
+
   /** Build the wire snapshot for GET /tonghuashun/snapshot. */
   snapshot(now: number): Snapshot {
-    const today = this.days.get(todayKey(now)) ?? null
+    const date = todayKey(now)
+    const today = this.days.get(date) ?? null
     return {
       generatedAt: now,
       totalTokens: this.total,
       today,
-      minuteSeries: [...this.minutes.values()].sort((a, b) => (a.minute < b.minute ? -1 : 1)),
+      // Only today's minutes: the intraday pane means "today", and replaying
+      // history would otherwise stack every past day onto the same clock slots.
+      minuteSeries: this.minuteRows(date),
       daySeries: this.dayRows(),
       workspaces: [...this.workspaces.values()].sort((a, b) => b.tokens - a.tokens),
       models: [...this.models.values()].sort((a, b) => b.tokens - a.tokens),
