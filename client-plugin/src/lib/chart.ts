@@ -46,7 +46,8 @@ export function candleInfoOf(candles: readonly Candle[], hover: number): CandleI
   const idx = hover >= 0 && hover < n ? hover : n - 1
   const k = candles[idx]
   if (k === undefined) return null
-  const chg = (k.c - k.o) / k.o * 100
+  // 开盘为 0（当日无消耗）时环比无意义，按 0 处理避免 NaN/Infinity 上屏
+  const chg = k.o !== 0 ? ((k.c - k.o) / k.o) * 100 : 0
   return {
     date: fmtDateSlash(new Date(k.t)),
     o: k.o,

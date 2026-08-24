@@ -4,6 +4,7 @@ import {
   byModelToFlow,
   daySeriesToCandles,
   daySeriesToPoints,
+  isSnapshotLike,
   mapSnapshot,
   minuteSeriesToIntraday,
   minuteSeriesToTape,
@@ -56,8 +57,15 @@ test('minuteToHours 解析小数小时', () => {
 
 test('wsCode 稳定且区分 cwd', () => {
   assert.equal(wsCode('E:\\WSL'), wsCode('E:\\WSL'))
-  assert.match(wsCode('E:\\WSL'), /^WS\d{3}$/)
+  assert.match(wsCode('E:\\WSL'), /^WS[0-9A-Z]{4}$/)
   assert.notEqual(wsCode('E:\\WSL'), wsCode('E:\\other'))
+})
+
+test('wsCode 桶空间足够宽：大量工作区不撞码', () => {
+  const codes = new Set<string>()
+  for (let i = 0; i < 2000; i++) codes.add(wsCode(`/home/dev/workspace-${i}`))
+  // 3 位十进制（900 桶）下 2000 个路径必然大量碰撞；36^4 空间应保持极低碰撞
+  assert.ok(codes.size > 1900, `碰撞过多：${codes.size}/2000`)
 })
 
 test('wsName 取 basename', () => {
@@ -142,4 +150,32 @@ test('daySeriesToPoints 截取近 N 日', () => {
   const points = daySeriesToPoints([day('2026-08-10', 1), day('2026-08-11', 2), day('2026-08-12', 3), day('2026-08-13', 4)], 2)
   assert.equal(points.length, 2)
   assert.equal(points[1].p, 4)
+})
+
+test('daySeriesToPoints 均值为滚动均值（不再恒为 0 压扁纵轴）', () => {
+  const points = daySeriesToPoints([day('2026-08-12', 100), day('2026-08-13', 300)], 2)
+  assert.equal(points[0].avg, 100)
+  assert.equal(points[1].avg, 200)
+  // 纵轴下界取 min(p, avg)：均值不为 0，5 日图不会被拉到 0
+  assert.ok(points.every((p) => p.avg > 0))
+})
+
+test('workspacesToInstruments 的 pct 用当日对昨日，而不是累计对昨日', () => {
+  const live = mapSnapshot({
+    ...SNAP,
+    // 累计 tokens 远大于当日桶：旧口径会把环比算成 +150%
+    workspaces: [{ cwd: 'E:\\WSL', tokens: 10000, sessions: 2, toolCalls: 3 }],
+  })
+  // 当日 6000 对昨日 4000 = +50%
+  assert.equal(live.instruments[0].pct, 50)
+  assert.equal(live.instruments[0].prevTokens, 4000)
+})
+
+test('isSnapshotLike 拒绝畸形响应', () => {
+  assert.equal(isSnapshotLike(SNAP), true)
+  assert.equal(isSnapshotLike(null), false)
+  assert.equal(isSnapshotLike('nope'), false)
+  assert.equal(isSnapshotLike({ generatedAt: 1, totalTokens: 1 }), false)
+  assert.equal(isSnapshotLike({ ...SNAP, daySeries: 'bad' }), false)
+  assert.equal(isSnapshotLike({ ...SNAP, workspaces: undefined }), false)
 })

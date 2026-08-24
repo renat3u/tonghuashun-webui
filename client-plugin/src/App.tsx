@@ -129,7 +129,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
   })
   const [chartPct, setChartPct] = useState(readSavedChartPct)
   const centerRef = useRef<HTMLElement | null>(null)
-  const liveSnapshot = useSnapshotPoller()
+  const { snapshot: liveSnapshot, stale: liveStale } = useSnapshotPoller()
   const engine = useMarketEngine(selected, liveSnapshot)
 
   const sessionState = useSessions((s) => s)
@@ -413,7 +413,7 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
           modelDetail={liveSnapshot?.today?.byModelDetail}
         />
       </div>
-      <StatusBar engine={engine} />
+      <StatusBar engine={engine} stale={liveStale} />
       {liveSnapshot === null && (
         <div className="demo-badge">{isLiveBridge() ? '正在连接数据…' : 'demo · mock market'}</div>
       )}

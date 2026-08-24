@@ -69,31 +69,66 @@ const LIVE_PATHS = [
   'src/styles/global.css',
 ]
 
+/** 快照轮询状态：snapshot 为最近一次成功结果，stale 表示连续拉取失败、数据已过期。 */
+export interface SnapshotPollState {
+  snapshot: Snapshot | null
+  stale: boolean
+}
+
+/** 连续失败达到该次数后标记 stale（UI 显示「数据延迟」）。 */
+const STALE_AFTER_FAILURES = 3
+/** 失败退避上限。 */
+const MAX_POLL_INTERVAL_MS = 30000
+
 /**
- * 轮询 /tonghuashun/snapshot；仅在内嵌 dsh web（window.__DSH_BOOT__ 存在）时启动，
- * 失败返回 null（引擎回退模拟行情）。
- * @param intervalMs - 轮询间隔。
- * @returns 最近一次快照（null = 尚无数据）。
+ * 轮询 /tonghuashun/snapshot；仅在内嵌 dsh web（window.__DSH_BOOT__ 存在）时启动。
+ * 失败保留上一帧快照并指数退避（intervalMs → 2x → … → 30s，成功后复位）；
+ * 页面隐藏时暂停轮询，回到可见后立刻拉一次。
+ * @param intervalMs - 基础轮询间隔。
+ * @returns 最近一次快照与陈旧标记（snapshot 为 null = 尚无数据）。
  */
-export function useSnapshotPoller(intervalMs = 5000): Snapshot | null {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+export function useSnapshotPoller(intervalMs = 5000): SnapshotPollState {
+  const [state, setState] = useState<SnapshotPollState>({ snapshot: null, stale: false })
   useEffect(() => {
     if (!isLiveBridge()) return
     let alive = true
     let timer: ReturnType<typeof setTimeout> | undefined
+    let failures = 0
+    const schedule = () => {
+      if (!alive) return
+      // 隐藏页不空转：等 visibilitychange 恢复
+      if (typeof document !== 'undefined' && document.hidden) return
+      const delay = Math.min(intervalMs * 2 ** Math.min(failures, 4), MAX_POLL_INTERVAL_MS)
+      timer = setTimeout(poll, delay)
+    }
     const poll = async () => {
       const next = await fetchSnapshot(3000)
       if (!alive) return
-      if (next !== null) setSnapshot(next)
-      timer = setTimeout(poll, intervalMs)
+      if (next !== null) {
+        failures = 0
+        setState({ snapshot: next, stale: false })
+      } else {
+        failures += 1
+        if (failures >= STALE_AFTER_FAILURES) {
+          setState((prev) => (prev.snapshot === null || prev.stale ? prev : { ...prev, stale: true }))
+        }
+      }
+      schedule()
+    }
+    const onVisibility = () => {
+      if (typeof document === 'undefined' || document.hidden) return
+      if (timer !== undefined) clearTimeout(timer)
+      void poll()
     }
     void poll()
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
     return () => {
       alive = false
       if (timer !== undefined) clearTimeout(timer)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [intervalMs])
-  return snapshot
+  return state
 }
 
 /** LiveMarket -> MarketStatic（live 模式下 changes/gitTree 只用真实 git 数据，缺失即空态）。 */
@@ -176,8 +211,14 @@ export function useMarketEngine(selectedCode: string, live?: Snapshot | null): M
 
   const randRef = useRef(mulberry32(Date.now() & 0xffffffff))
   const lastPriceRef = useRef(0)
+  // 快照映射只做一次（memo）：mapSnapshot 会为每个工作区重建日K/变更/树，
+  // 心跳每 1.2s 触发一次重渲染，不能在渲染期重复执行。
+  const liveMarket = useMemo(
+    () => (live === undefined || live === null ? null : mapSnapshot(live)),
+    [live],
+  )
   const liveRef = useRef<LiveMarket | null>(null)
-  liveRef.current = live === undefined || live === null ? null : mapSnapshot(live)
+  liveRef.current = liveMarket
 
   // 每秒刷新时钟（live 与模拟共用）
   useEffect(() => {
@@ -193,7 +234,8 @@ export function useMarketEngine(selectedCode: string, live?: Snapshot | null): M
       tickRef.current += 1
       const heartbeat = tickRef.current
       setTick(heartbeat)
-      if (liveRef.current !== null) return
+      // 快照有工作区数据才算真正 live；空快照仍走模拟随机游走（与引擎 live 口径一致）
+      if (liveRef.current !== null && liveRef.current.instruments.length > 0) return
 
       // 1) 选中工作区：今日 Token 消耗微扰 + 每分钟消耗成交
       const ins = staticData.instruments.find((x) => x.code === selectedCode)
@@ -270,10 +312,10 @@ export function useMarketEngine(selectedCode: string, live?: Snapshot | null): M
   }, [selectedCode, staticData])
 
   // live 模式：报价/分时/流向/指数全部来自快照（tick 仅驱动图表刷新）。
-  // useMemo 以 `live` prop 为依赖：每次快照轮询到新对象都会重映射，避免只消费首帧。
+  // 快照存在但还没有任何工作区数据时按非 live 处理（回退模拟行情），
+  // 保证 engine.live 标志与实际展示的数据口径一致。
   return useMemo(() => {
-    const liveMarket = live === undefined || live === null ? null : mapSnapshot(live)
-    if (liveMarket === null) {
+    if (liveMarket === null || liveMarket.instruments.length === 0) {
       return { static: staticData, quotes, tape, changes, tokenFlow, indices, tick, clock, live: false }
     }
     const liveStatic = marketStaticFromLive(liveMarket, staticData)
@@ -300,7 +342,7 @@ export function useMarketEngine(selectedCode: string, live?: Snapshot | null): M
       clock,
       live: true,
     }
-  }, [live, staticData, quotes, tape, changes, tokenFlow, indices, tick, clock, selectedCode])
+  }, [liveMarket, staticData, quotes, tape, changes, tokenFlow, indices, tick, clock, selectedCode])
 }
 
 /** 由引擎取某工作区实时报价；回退到静态数据 */

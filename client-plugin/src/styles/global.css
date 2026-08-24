@@ -1960,6 +1960,16 @@ button {
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* 快照连续拉取失败：连接指示转为告警色 */
+.statusbar .conn.stale {
+  color: #e8c558;
+}
+
+.statusbar .conn.stale .pulse {
+  background: #e8c558;
+  box-shadow: 0 0 6px #e8c558;
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.45;

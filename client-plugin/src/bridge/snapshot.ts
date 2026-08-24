@@ -86,6 +86,19 @@ export interface Snapshot {
   models: { model: string; tokens: number }[]
 }
 
+/** 轻量结构校验：字段缺失/类型错误的响应按不可用处理，不让畸形数据进渲染层。 */
+export function isSnapshotLike(data: unknown): data is Snapshot {
+  if (typeof data !== 'object' || data === null) return false
+  const snap = data as Snapshot
+  return typeof snap.generatedAt === 'number'
+    && typeof snap.totalTokens === 'number'
+    && (snap.today === null || (typeof snap.today === 'object' && snap.today !== null))
+    && Array.isArray(snap.minuteSeries)
+    && Array.isArray(snap.daySeries)
+    && Array.isArray(snap.workspaces)
+    && Array.isArray(snap.models)
+}
+
 export async function fetchSnapshot(timeoutMs = 3000): Promise<Snapshot | null> {
   try {
     const controller = new AbortController()
@@ -97,7 +110,7 @@ export async function fetchSnapshot(timeoutMs = 3000): Promise<Snapshot | null> 
       })
       if (!res.ok) return null
       const data: unknown = await res.json()
-      return data as Snapshot
+      return isSnapshotLike(data) ? data : null
     } finally {
       clearTimeout(timer)
     }
@@ -145,7 +158,10 @@ export function wsCode(cwd: string): string {
   for (let i = 0; i < cwd.length; i++) {
     hash = (hash * 31 + cwd.charCodeAt(i)) | 0
   }
-  return `WS${String(100 + Math.abs(hash) % 900)}`
+  // 无符号化后取 36^4（约 168 万）空间：3 位十进制只有 900 个桶，工作区一多就撞码，
+  // 撞码会让按 code 索引的日K/变更 Map 互相覆盖。
+  const bucket = (hash >>> 0) % 36 ** 4
+  return `WS${bucket.toString(36).toUpperCase().padStart(4, '0')}`
 }
 
 export function wsName(cwd: string): string {
@@ -208,12 +224,17 @@ export function minuteSeriesToTape(series: readonly SnapshotMinute[]): TapeRow[]
 }
 
 export function daySeriesToPoints(series: readonly SnapshotDay[], count = 5): IntradayPoint[] {
-  return series.slice(-count).map((day) => ({
-    t: Number.isFinite(Date.parse(day.date)) ? Date.parse(day.date) : 0,
-    p: day.tokens,
-    avg: 0,
-    vol: 0,
-  }))
+  // avg 用窗口内滚动均值：avg=0 会把 5 日图纵轴下界压到 0（绘制时 min 包含均线）。
+  let sum = 0
+  return series.slice(-count).map((day, index) => {
+    sum += day.tokens
+    return {
+      t: Number.isFinite(Date.parse(day.date)) ? Date.parse(day.date) : 0,
+      p: day.tokens,
+      avg: sum / (index + 1),
+      vol: 0,
+    }
+  })
 }
 
 export function byModelToFlow(byModel: Record<string, number>): FlowRow[] {
@@ -230,10 +251,14 @@ export function workspacesToInstruments(
   workspaces: readonly SnapshotWorkspace[],
   daySeries: readonly SnapshotDay[],
 ): LiveInstrumentRow[] {
+  // 涨跌幅口径：日桶序列最后一天（今日）对前一天，而不是「累计总量对昨日」——
+  // 累计值永远大于单日值，会把环比恒推成正数。
+  const lastDay = daySeries[daySeries.length - 1]
   const yesterday = daySeries[daySeries.length - 2]
   return [...workspaces]
     .sort((a, b) => b.tokens - a.tokens)
     .map((ws) => {
+      const todayTokens = lastDay?.byWorkspace[ws.cwd] ?? 0
       const prevTokens = yesterday?.byWorkspace[ws.cwd] ?? 0
       return {
         code: wsCode(ws.cwd),
@@ -243,7 +268,7 @@ export function workspacesToInstruments(
         sessions: ws.sessions,
         toolCalls: ws.toolCalls,
         prevTokens,
-        pct: prevTokens > 0 ? ((ws.tokens - prevTokens) / prevTokens) * 100 : 0,
+        pct: prevTokens > 0 ? ((todayTokens - prevTokens) / prevTokens) * 100 : 0,
       }
     })
 }
