@@ -6,6 +6,7 @@ import '../client-plugin/src/styles/global.css'
 import {
   INITIAL_MESSAGES,
   INITIAL_STEPS,
+  MODELS,
   cannedReply,
   type ConvMessage,
   type TrajStep,
@@ -54,9 +55,13 @@ function DemoChat({ selectedName }: ChatOwnerProps) {
   const idRef = useRef(100)
   const [error, setError] = useState<string | null>(null)
 
-  const onSend = (text: string) => {
-    if (replying) return
-    setMessages((prev) => [...prev, { id: ++idRef.current, role: 'user', text }])
+  /** 演示发送：返回是否被接受，被拒时 composer 会回填草稿。 */
+  const onSend = (text: string, files?: readonly File[]): boolean => {
+    if (replying) return false
+    const attachmentNote = files !== undefined && files.length > 0
+      ? `（附 ${files.length} 张图片，演示模式不上传）`
+      : ''
+    setMessages((prev) => [...prev, { id: ++idRef.current, role: 'user', text: `${text}${attachmentNote}` }])
     setReplying(true)
     setTimeout(() => {
       setSteps((prev) => [
@@ -73,6 +78,7 @@ function DemoChat({ selectedName }: ChatOwnerProps) {
       setMessages((prev) => [...prev, { id: ++idRef.current, role: 'assistant', text: cannedReply(text) }])
       setReplying(false)
     }, 1400)
+    return true
   }
 
   return (
@@ -80,7 +86,8 @@ function DemoChat({ selectedName }: ChatOwnerProps) {
       selectedName={selectedName}
       directory="~/tonghuashun-harness"
       sessionId="th-20260807-0945"
-      model="DeepSeek V4 Flash Max"
+      model={MODELS[0] ?? 'DeepSeek V4 Flash Max'}
+      modelOptions={MODELS}
       version="0.1.0-demo"
       messages={messages}
       steps={steps}
@@ -88,9 +95,15 @@ function DemoChat({ selectedName }: ChatOwnerProps) {
       partialText=""
       error={error}
       hasSession
+      sending={replying}
       onSend={onSend}
       onCancel={() => setReplying(false)}
       onNewSession={() => setError('演示模式：无 DSH 运行时，不支持新建会话。')}
+      // 演示模式没有会话可执行命令：明确返回 false，让 composer 给出提示而不是静默无效
+      onCommand={async (line) => {
+        setError(`演示模式：无 DSH 运行时，命令未执行（${line}）。`)
+        return false
+      }}
       onDismissError={() => setError(null)}
     />
   )
@@ -107,7 +120,8 @@ createRoot(container).render(
       openSession={() => {}}
       newSession={() => {}}
       openPath={async () => {}}
-      command={async () => true}
+      // 演示外壳没有 DSH 会话：命令一律未执行（App 会给出轻提示）
+      command={async () => false}
       renderChat={(owner) => <DemoChat selectedName={owner.selectedName} />}
     />
   </StrictMode>,

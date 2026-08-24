@@ -91,7 +91,14 @@ export function lastModelOf(snapshot: ConversationSnapshotLike): string | null {
   return null
 }
 
-/** 节点 -> 对话气泡（用户/助手/steering/错误）。 */
+/**
+ * 节点 -> 对话气泡（用户/助手/steering/错误）。
+ *
+ * 注：本插件自带的 conversation definitions（../conversation/nodes.ts）目前不产出
+ * `steering` 节点——运行中被 admit 的用户补充在事件层仍是 `user/message`。这里的
+ * steering 分支是对上游可能新增该节点类型的防御，不是死代码；等 DSH 明确 steer
+ * 事件形态后再决定是否在 definition 侧区分。
+ */
 export function nodesToMessages(nodes: readonly ConversationNodeLike[]): ConvMessage[] {
   const out: ConvMessage[] = []
   for (const node of nodes) {

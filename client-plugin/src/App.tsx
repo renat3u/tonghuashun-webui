@@ -279,7 +279,13 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
     if (line.length === 0) return
     setCommandOpen(false)
     setCommandDraft('')
-    await command(line)
+    // 结果必须可见：此前无论被接受还是被拒都没有任何反馈
+    try {
+      const ok = await command(line)
+      setNotice(ok ? `已执行 ${line}` : `命令未执行：${line}（当前无可用会话或被拒绝）`)
+    } catch {
+      setNotice(`命令执行异常：${line}`)
+    }
   }
 
   /** 拖动分隔条调整图表高度（窗口级监听，越过画布/iframe 也不丢事件）。 */

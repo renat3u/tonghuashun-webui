@@ -58,3 +58,22 @@
   重新启用需要恢复设置面板的完整 slot 链；收益有限。
 - 结论：保留“打开设置文档”行为；未来可在 `TerminalPanel` 内增加只读设置摘要（模型/权限默认值），
   但仍以真实 DSH 设置文档为唯一编辑入口。
+
+## 契约漂移风险（上游 DSH 处于 developer preview）
+
+`contract.ts` 与 `conversation/nodes.ts` 是对上游 **DSH `0.1.1-rc.1`** 的结构镜像
+（手写声明，不解析 monorepo 包类型）。上游明确会有 breaking change，风险面按影响排序：
+
+| 面 | 依赖的上游形态 | 断裂表现 |
+|---|---|---|
+| `root` / `terminal.chat` 槽注册 | `ctx.slots.register` 的 options + 组件 props（seat 注入） | 整个界面不挂载（root 槽空白） |
+| conversation definitions / view builder | `conversationEvents` / `conversationViews` 的 match/start/update/buildViewNode 语义 | 对话与 Trajectory 空白（快照退化为空） |
+| `permissions` 投影 | `session.projections.faceOf('permissions')` 的值结构 | 权限按钮显示「未知」（已防御，不崩） |
+| `remote.fileReferences` / `connection.api.skills` | RPC 签名与返回包裹 | 搜索/技能面板空态（已防御，不崩） |
+
+前两项是硬失败面。上游升版时的验证顺序：`npm run typecheck` →
+`client-plugin` 的 `scripts/smoke-bundle.mjs`（bundle 装载 + SSR）→ 真实 DSH 里确认
+root 槽渲染与对话流非空。
+
+**（defer）** 对真实 dsh 包做结构断言的契约冒烟需要装有 dsh monorepo 的环境，本轮未做；
+当前以「pin 版本 + 上述验证顺序」替代。
