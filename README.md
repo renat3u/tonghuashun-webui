@@ -2,10 +2,6 @@
 
 同花顺风格股票终端 + AI Agent 工作区融合的 DeepSeek Harness（DSH）终端式前端。
 
-**最终定位**：作为一个插件注入 DSH，替换 `dsh` 默认 Web 界面（独立运行 = 开发/演示模式，见下文「与 DSH 的集成路径」）。
-
-核心隐喻：**K 线图以股票行情展示 Token 消耗** —— 一次删掉 10,000 行死代码的大重构，烧穿 61.40亿 Token，K 线上一根大红烛拔地而起，子图的代码变更则是一根大绿柱一砸到底。
-
 ![设计参考截图1](assets/预期效果图1.png)
 ![设计参考截图2](assets/预期效果图2.png)
 
@@ -21,17 +17,6 @@ npm run typecheck  # 仅类型检查
 ```
 
 要求 Node ≥ 20.19（开发环境实测 Node 24）。
-
-## 界面结构（对照设计稿 `designs/dsh-terminal/DSH Terminal.html`）
-
-| 区域 | 组件 | 说明 |
-| --- | --- | --- |
-| 顶部红色标题栏 | `TopBar` | 指数条（DSH 指数 / 今日消耗 / 活跃工作区）+ 搜索框（工作区 / 会话 / 模型 / 文件索引检索并跳转） |
-| 左栏 | `Rail` | deepseek 字标；导航仅保留 **对话（主界面）/ 技能 / 插件 / 设置** 四个 DSH 入口（后三个为插件注入后的集成点）；**关注项目**列表 = 各工作区，显示 Token 消耗量与涨跌幅，点击切换 |
-| 中栏上 | `ChatPanel` | 对话 / Trajectory / 检查点 / 队列四个页签；ASCII 欢迎横幅、真实会话节点映射的轨迹、消息气泡、消息输入框（模型切换、真实权限当前值） |
-| 中栏下 | `KLineChart` | Canvas 自绘 K 线：分时 / 5日 / 日K / 周K / 月K；**主图 = Token 消耗量**（MA5/10/20），子图 = 代码变更量（live 模式来自真实 git locSeries，红=增行，绿=删行）；十字光标 + OHLC 信息条；**高度可拖动调节**（分隔条拖动，双击复位，位置本地记忆） |
-| 右栏 | `QuotePanel` | 行情详情（今日 Token 消耗 / 环比、最高/今开/最低/昨收、提交量、代码量、变更率、上下文 TTM、总Token、会话数）；页签：**最近变更**（live 模式 = meter 采集的工作区 git log，红增绿删）/ **git tree**（HEAD 提交文件树）/ **token流向** / **盘口**；详情弹窗展示真实 diff 摘要；**分时成交 = 每分钟 Token 消耗** |
-| 底部状态栏 | `StatusBar` | DSH指数（今日 Token 消耗）/ 会话 / 插件三大指数、时钟、连接状态 |
 
 **独立运行**（`npm run dev`）时为确定性模拟行情；**嵌入 DSH** 后 token 行情、K 线、最近变更、git tree、权限、文件搜索全部来自真实数据，拿不到真实数据的面板显示明确空态，不回退模拟。
 
@@ -71,19 +56,6 @@ tests/                         # node:test 单元测试（数据层）
 数据层说明：`client-plugin/src/lib/`（rand / format / market / useMarketEngine）、
 `client-plugin/src/data/trajectory.ts`、`client-plugin/src/bridge/`（DSH 数据接入契约 + 插件快照契约，
 详见 `client-plugin/src/bridge/README.md`）。
-
-## 行情隐喻映射
-
-| 股票概念 | DSH 概念 |
-| --- | --- |
-| 股价 / 指数 | Token 消耗量（日 K 收盘 = 当日总消耗） |
-| 涨跌幅 | Token 消耗环比（红=增，绿=减） |
-| 成交量 VOL（子图） | 代码变更量（行，红=增行，绿=删行，GitHub 风格） |
-| 分时成交 | 每分钟 Token 消耗 |
-| 五档 → 最近变更 | 最近几次代码修改（+行红 / -行绿） |
-| 资金流向 → token流向 | 最近几次 Token 被哪些项目消耗 |
-| 提交明细 → git tree | 最近一次提交的文件树 |
-| 大红烛 + 绿柱一砸到底 | 删 10,000 行的大重构：Token 烧穿 + 代码量砸底（DSH001） |
 
 ## 与 DSH 的集成路径（插件注入）
 
