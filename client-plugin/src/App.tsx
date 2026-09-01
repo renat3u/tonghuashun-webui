@@ -383,7 +383,9 @@ export default function App({ useSessions, useWorkspaces, openSession, newSessio
             fiveDay={fiveDay}
             prevToken={currentInstrument.prevToken}
             crash={selected === 'DSH001'}
-            livePrice={engine.tape[0]?.tokens ?? currentInstrument.prevToken / 240}
+            livePrice={intraday.length > 0
+              ? (intraday[intraday.length - 1]?.p ?? 0) + (engine.live ? 0 : engine.tape[0]?.tokens ?? 0)
+              : currentInstrument.prevToken / 240}
             tick={engine.tick}
             overlayOptions={hasRealWorkspaces
               ? workspaceRows.filter((r) => r.code !== resolvedCode).map((r) => ({ code: r.code, name: r.name }))

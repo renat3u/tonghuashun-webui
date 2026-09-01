@@ -7,10 +7,12 @@ import { join } from 'node:path'
 import {
   buildChanges,
   buildGitTree,
+  discoverGitRoots,
   foldLocDays,
   parseHistory,
   parseNumstat,
   WorkspaceGitIndex,
+  type GitRepoRef,
 } from '../src/git.js'
 
 function git(cwd: string, ...args: string[]): string {
@@ -129,6 +131,41 @@ test('WorkspaceGitIndex 读取真实仓库（git 可用时）', { skip: !hasGit 
   }
 })
 
+test('WorkspaceGitIndex 聚合工作区文件夹下的所有嵌套 git 仓库', { skip: !hasGit }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ths-nested-'))
+  try {
+    // 工作区根目录不是 git 仓库，下面挂两个独立项目。
+    mkdirSync(join(dir, 'app'), { recursive: true })
+    mkdirSync(join(dir, 'tools', 'cli'), { recursive: true })
+    for (const repo of [join(dir, 'app'), join(dir, 'tools', 'cli')]) {
+      git(repo, 'init')
+      git(repo, 'config', 'user.email', 'test@example.invalid')
+      git(repo, 'config', 'user.name', 'test')
+      mkdirSync(join(repo, 'src'), { recursive: true })
+      writeFileSync(join(repo, 'src', 'a.ts'), 'export const a = 1\n')
+      git(repo, 'add', '.')
+      git(repo, 'commit', '-m', 'init')
+    }
+
+    const roots = await discoverGitRoots(dir)
+    assert.equal(roots.length, 2)
+
+    const index = new WorkspaceGitIndex(60_000)
+    const view = await index.view(dir, Date.now())
+    assert.ok(view)
+    // 两条变更分别带各自仓库前缀，合并后按时间倒序（这里两个 init 可任序，按路径断言存在）。
+    assert.ok(view.changes.some((row) => row.path === 'app/src/a.ts'))
+    assert.ok(view.changes.some((row) => row.path === 'tools/cli/src/a.ts'))
+    // 目录聚合行同样保留嵌套前缀。
+    assert.ok(view.gitTree.some((row) => row.path === 'app/src/' && row.directory === true))
+    assert.ok(view.gitTree.some((row) => row.path === 'tools/cli/src/' && row.directory === true))
+    // 两个仓库的同日 LOC 相加。
+    assert.equal(view.locSeries.reduce((sum, day) => sum + day.net, 0), 2)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('TTL 过期后 HEAD 未变只跑 rev-parse，不重走 git log', async () => {
   const calls: string[][] = []
   const runner = async (_cwd: string, args: readonly string[]) => {
@@ -138,7 +175,8 @@ test('TTL 过期后 HEAD 未变只跑 rev-parse，不重走 git log', async () =
     if (args[0] === 'show') return 'diff body'
     return null
   }
-  const index = new WorkspaceGitIndex(1000, runner)
+  const discover = async (): Promise<GitRepoRef[]> => [{ root: '/w', prefix: '' }]
+  const index = new WorkspaceGitIndex(1000, runner, discover)
   const first = await index.view('/w', 0)
   assert.ok(first)
   const logCallsAfterFirst = calls.filter((c) => c[0] === 'log').length
@@ -166,7 +204,8 @@ test('HEAD 变化后重新读取提交历史', async () => {
     if (args[0] === 'show') return 'diff body'
     return null
   }
-  const index = new WorkspaceGitIndex(1000, runner)
+  const discover = async (): Promise<GitRepoRef[]> => [{ root: '/w', prefix: '' }]
+  const index = new WorkspaceGitIndex(1000, runner, discover)
   await index.view('/w', 0)
   assert.equal(calls.filter((c) => c[0] === 'log').length, 1)
   head = 'sha-b'

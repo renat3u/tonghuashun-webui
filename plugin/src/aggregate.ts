@@ -11,7 +11,7 @@
  * session and tool-call counts live inside the day rows and merge with them.
  */
 
-import type { DayStat, MinuteStat, ModelStat, Snapshot, UsageRecord, WorkspaceStat } from './types.js'
+import type { DayMinuteSeries, DayStat, MinuteStat, ModelStat, Snapshot, UsageRecord, WorkspaceStat } from './types.js'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
@@ -91,7 +91,9 @@ export class UsageAggregator {
     const date = dayKey(record.ts)
     const minute = minuteKey(record.ts)
     const bucket = dayMinuteKey(record.ts)
-    const tokens = record.inputTokens + record.outputTokens + record.cacheReadTokens + record.cacheWriteTokens + record.reasoningTokens
+    // reasoningTokens 已包含在 outputTokens 中，只用于明细，不进入总量
+    // （与 @deepseek-ai/dsh-token-meter 的 usageTokens 口径一致）。
+    const tokens = record.inputTokens + record.outputTokens + record.cacheReadTokens + record.cacheWriteTokens
 
     const m = this.minutes.get(bucket)
     if (m === undefined) {
@@ -278,10 +280,22 @@ export class UsageAggregator {
     return rows.sort((a, b) => (a.minute < b.minute ? -1 : a.minute > b.minute ? 1 : 0))
   }
 
+  /** Recent days' minute series (oldest first); skips days without minute buckets. */
+  minuteRowsByDay(dates: readonly string[]): DayMinuteSeries[] {
+    const rows: DayMinuteSeries[] = []
+    for (const date of dates) {
+      const minutes = this.minuteRows(date)
+      if (minutes.length > 0) rows.push({ date, minutes })
+    }
+    return rows
+  }
+
   /** Build the wire snapshot for GET /tonghuashun/snapshot. */
   snapshot(now: number): Snapshot {
     const date = todayKey(now)
     const today = this.days.get(date) ?? null
+    const daySeries = this.dayRows()
+    const recentDates = daySeries.slice(-5).map((day) => day.date)
     return {
       generatedAt: now,
       totalTokens: this.total,
@@ -289,7 +303,9 @@ export class UsageAggregator {
       // Only today's minutes: the intraday pane means "today", and replaying
       // history would otherwise stack every past day onto the same clock slots.
       minuteSeries: this.minuteRows(date),
-      daySeries: this.dayRows(),
+      // 5日图使用真实分钟桶，而不是把每个日总量摊成假曲线。
+      minuteSeriesByDay: this.minuteRowsByDay(recentDates),
+      daySeries,
       workspaces: [...this.workspaces.values()].sort((a, b) => b.tokens - a.tokens),
       models: [...this.models.values()].sort((a, b) => b.tokens - a.tokens),
     }

@@ -165,6 +165,29 @@ test('分钟序列按时间升序且只含当天', () => {
   assert.deepEqual(snap.minuteSeries.map((m) => m.minute), ['09:05', '15:05'])
 })
 
+test('reasoningTokens 已含在 outputTokens 中，不重复计入总量', () => {
+  const agg = new UsageAggregator()
+  agg.fold(record({ ts: atLocal(9, 0), inputTokens: 100, outputTokens: 50, reasoningTokens: 30, model: 'm1' }))
+  const snap = agg.snapshot(Date.now())
+  assert.equal(snap.totalTokens, 150)
+  assert.equal(snap.today?.tokens, 150)
+  // 明细仍保留 reasoning，便于模型面板展示。
+  assert.equal(snap.today?.byModelDetail?.['m1']?.tokens, 150)
+  assert.equal(snap.today?.byModelDetail?.['m1']?.reasoningTokens, 30)
+})
+
+test('minuteSeriesByDay 供 5 日图使用真实分钟桶，按日隔离', () => {
+  const agg = new UsageAggregator()
+  agg.fold(record({ ts: atLocal(9, 0), inputTokens: 100, outputTokens: 0 }))
+  agg.fold(record({ ts: atLocal(10, 0, -1), inputTokens: 200, outputTokens: 0 }))
+  agg.fold(record({ ts: atLocal(9, 30, -1), inputTokens: 50, outputTokens: 0 }))
+  const snap = agg.snapshot(Date.now())
+  assert.ok(snap.minuteSeriesByDay)
+  assert.equal(snap.minuteSeriesByDay.length, 2)
+  assert.equal(snap.minuteSeriesByDay[0]?.date, dayKey(atLocal(10, 0, -1)))
+  assert.deepEqual(snap.minuteSeriesByDay[0]?.minutes.map((m) => m.minute), ['09:30', '10:00'])
+})
+
 test('工作区会话数按 distinct session 统计（不再恒为 1）', () => {
   const agg = new UsageAggregator()
   agg.fold(record({ ts: atLocal(9, 0), sessionId: 's1', cwd: '/w1' }))

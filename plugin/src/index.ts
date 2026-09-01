@@ -49,6 +49,8 @@ declare module '@deepseek-ai/cordis' {
 /** Attach cached git views to the snapshot's workspace rows (never throws). */
 async function attachGitViews(snapshot: Snapshot, gitIndex: WorkspaceGitIndex): Promise<Snapshot> {
   const workspaces: WorkspaceStat[] = await Promise.all(snapshot.workspaces.map(async (workspace) => {
+    // '(no cwd)' 是 meter 对无工作区会话的归并键，不是磁盘目录，跳过 git 扫描。
+    if (workspace.cwd === '(no cwd)') return workspace
     const view = await gitIndex.view(workspace.cwd, snapshot.generatedAt)
     if (view === null) return workspace
     return { ...workspace, changes: view.changes, gitTree: view.gitTree, locSeries: view.locSeries }

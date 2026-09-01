@@ -37,6 +37,12 @@ export interface SnapshotMinute {
   outputTokens: number
 }
 
+/** One day's full minute series for the 5-day chart. */
+export interface SnapshotDayMinutes {
+  date: string
+  minutes: SnapshotMinute[]
+}
+
 /** 单条真实提交变更（与 plugin/src/types.ts 的 WorkspaceChange 对应）。 */
 export interface SnapshotChange {
   ts: number
@@ -81,6 +87,8 @@ export interface Snapshot {
   totalTokens: number
   today: SnapshotDay | null
   minuteSeries: SnapshotMinute[]
+  /** 最近若干天的完整分钟序列（5日图真实数据）；旧版 meter 可能缺省。 */
+  minuteSeriesByDay?: SnapshotDayMinutes[]
   daySeries: SnapshotDay[]
   workspaces: SnapshotWorkspace[]
   models: { model: string; tokens: number }[]
@@ -94,6 +102,7 @@ export function isSnapshotLike(data: unknown): data is Snapshot {
     && typeof snap.totalTokens === 'number'
     && (snap.today === null || (typeof snap.today === 'object' && snap.today !== null))
     && Array.isArray(snap.minuteSeries)
+    && (snap.minuteSeriesByDay === undefined || Array.isArray(snap.minuteSeriesByDay))
     && Array.isArray(snap.daySeries)
     && Array.isArray(snap.workspaces)
     && Array.isArray(snap.models)
@@ -195,14 +204,15 @@ export function daySeriesToCandles(
   })
 }
 
+/** 今日分时：p = 当日累计消耗（与日K收盘=当日总量同口径），分时成交另见 tape。 */
 export function minuteSeriesToIntraday(series: readonly SnapshotMinute[]): IntradayPoint[] {
   let sum = 0
   return series.map((minute, index) => {
     sum += minute.tokens
     return {
       t: minuteToHours(minute.minute),
-      p: minute.tokens,
-      avg: index === 0 ? minute.tokens : sum / (index + 1),
+      p: sum,
+      avg: index === 0 ? sum : sum / (index + 1),
       vol: 0,
     }
   })
@@ -223,6 +233,29 @@ export function minuteSeriesToTape(series: readonly SnapshotMinute[]): TapeRow[]
   return rows
 }
 
+/** 5日图：把最近若干天的真实分钟桶展开为跨日累计序列（oldest first）。 */
+export function minuteSeriesByDayToIntraday(days: readonly SnapshotDayMinutes[]): IntradayPoint[] {
+  let sum = 0
+  let count = 0
+  const points: IntradayPoint[] = []
+  for (const day of days) {
+    const base = new Date(`${day.date}T00:00:00`).getTime()
+    const dayTime = Number.isFinite(base) ? base : 0
+    for (const minute of day.minutes) {
+      sum += minute.tokens
+      count += 1
+      points.push({
+        t: dayTime + minuteToHours(minute.minute) * 3600000,
+        p: sum,
+        avg: sum / count,
+        vol: 0,
+      })
+    }
+  }
+  return points
+}
+
+/** 无分钟历史时的 5 日回退：日累计序列（真实日总量，不合成日内曲线）。 */
 export function daySeriesToPoints(series: readonly SnapshotDay[], count = 5): IntradayPoint[] {
   // avg 用窗口内滚动均值：avg=0 会把 5 日图纵轴下界压到 0（绘制时 min 包含均线）。
   let sum = 0
@@ -230,7 +263,7 @@ export function daySeriesToPoints(series: readonly SnapshotDay[], count = 5): In
     sum += day.tokens
     return {
       t: Number.isFinite(Date.parse(day.date)) ? Date.parse(day.date) : 0,
-      p: day.tokens,
+      p: sum,
       avg: sum / (index + 1),
       vol: 0,
     }
@@ -334,12 +367,15 @@ export function mapSnapshot(snap: Snapshot): LiveMarket {
       decimals: 0,
     },
   ]
+  const minuteDays = snap.minuteSeriesByDay ?? []
   return {
     instruments,
     daily: daySeriesToCandles(snap.daySeries),
     dailyByWorkspace,
     intraday: minuteSeriesToIntraday(snap.minuteSeries),
-    fiveDay: daySeriesToPoints(snap.daySeries),
+    fiveDay: minuteDays.length > 0
+      ? minuteSeriesByDayToIntraday(minuteDays)
+      : daySeriesToPoints(snap.daySeries),
     tape: minuteSeriesToTape(snap.minuteSeries),
     tokenFlow: byModelToFlow(snap.today?.byModel ?? {}),
     indices,

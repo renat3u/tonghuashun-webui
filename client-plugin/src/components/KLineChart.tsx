@@ -1647,8 +1647,8 @@ function drawLineView(ctx: CanvasRenderingContext2D, o: LineViewOpts): PriceScal
   // 图例
   ctx.textAlign = 'left'
   ctx.fillStyle = priceCol
-  ctx.fillText('Token消耗', padL + 2, padT - 9)
-  let lx = padL + 2 + ctx.measureText('Token消耗').width + 10
+  ctx.fillText('累计Token', padL + 2, padT - 9)
+  let lx = padL + 2 + ctx.measureText('累计Token').width + 10
   ctx.fillStyle = '#e8c558'
   ctx.fillText('均值', lx, padT - 9)
   lx += ctx.measureText('均值').width + 10

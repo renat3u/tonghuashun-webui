@@ -42,9 +42,11 @@ test('aggregateWeekly 按周聚合 OHLC', () => {
   const weeks = aggregateWeekly([mon, tue])
   assert.equal(weeks.length, 1)
   assert.equal(weeks[0].o, mon.o)
-  assert.equal(weeks[0].h, 13)
+  // 累计口径下周期高点 = 周期末累计值。
+  assert.equal(weeks[0].h, 22.5)
   assert.equal(weeks[0].l, 8)
-  assert.equal(weeks[0].c, 12)
+  // Token 是成交量：周收盘 = 周一 10.5 + 周二 12。
+  assert.equal(weeks[0].c, 22.5)
   assert.equal(weeks[0].loc, 150)
 })
 

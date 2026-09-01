@@ -51,13 +51,31 @@ export interface MeterEvent {
   time: number
   data: unknown
   ignorable?: true
+  /** `assistant/message` 引用的源 chunk seq；token 时间线分摊用，结构子集。 */
+  sourceEventSeqs?: number[]
 }
 
-/** Per-session fold position: consumed events plus the latest model attribution. */
+/** Per-session fold position: consumed events plus token timeline state. */
 export interface FoldCursor {
   consumed: number
   provider?: string
   model?: string
+  /** 最近一次 `request/header` 的事件时间（输入/cache token 的归属时刻）。 */
+  requestTs?: number
+  /** 当前 model step 的起点与流式 chunk 权重。 */
+  step?: {
+    turn: number
+    step: number
+    ts: number
+    chunks: TimedTokenWeight[]
+  }
+}
+
+/** 一个流式 chunk 在 token 时间线中的权重（按字符长度估算 token 数）。 */
+export interface TimedTokenWeight {
+  ts: number
+  kind: 'output' | 'reasoning'
+  weight: number
 }
 
 /** Per-minute consumption stat (分时成交). */
@@ -67,6 +85,13 @@ export interface MinuteStat {
   tokens: number
   inputTokens: number
   outputTokens: number
+}
+
+/** One day's full minute series (used by the 5-day chart). */
+export interface DayMinuteSeries {
+  /** Local 'YYYY-MM-DD'. */
+  date: string
+  minutes: MinuteStat[]
 }
 
 /** Per-model detailed token buckets for one day. */
@@ -173,6 +198,8 @@ export interface Snapshot {
   today: DayStat | null
   /** Today's per-minute series, ascending. */
   minuteSeries: MinuteStat[]
+  /** Recent days' minute series for the 5-day chart; oldest first, may be empty. */
+  minuteSeriesByDay?: DayMinuteSeries[]
   /** Per-day series, ascending. */
   daySeries: DayStat[]
   workspaces: WorkspaceStat[]

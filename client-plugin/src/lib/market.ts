@@ -155,13 +155,15 @@ export function aggregateWeekly(daily: Candle[]): Candle[] {
   }
   return [...groups.values()].map((arr) => {
     const first = arr[0]
-    const last = arr[arr.length - 1]
+    // Token 是成交量：周期收盘 = 周期内日成交量的真实合计，而不是最后一天的日值。
+    // 累计口径下高点 = 周期末累计值，低点取周期内出现过的最低累计值。
+    const close = arr.reduce((sum, k) => sum + k.c, 0)
     return {
       t: first.t,
       o: first.o,
-      c: last.c,
-      h: Math.max(...arr.map((k) => k.h)),
-      l: Math.min(...arr.map((k) => k.l)),
+      c: close,
+      h: Math.max(close, ...arr.map((k) => k.h)),
+      l: Math.min(first.o, ...arr.map((k) => k.l)),
       loc: arr.reduce((s, k) => s + k.loc, 0),
     }
   })
@@ -179,13 +181,15 @@ export function aggregateMonthly(daily: Candle[]): Candle[] {
   }
   return [...groups.values()].map((arr) => {
     const first = arr[0]
-    const last = arr[arr.length - 1]
+    // Token 是成交量：周期收盘 = 周期内日成交量的真实合计，而不是最后一天的日值。
+    // 累计口径下高点 = 周期末累计值，低点取周期内出现过的最低累计值。
+    const close = arr.reduce((sum, k) => sum + k.c, 0)
     return {
       t: first.t,
       o: first.o,
-      c: last.c,
-      h: Math.max(...arr.map((k) => k.h)),
-      l: Math.min(...arr.map((k) => k.l)),
+      c: close,
+      h: Math.max(close, ...arr.map((k) => k.h)),
+      l: Math.min(first.o, ...arr.map((k) => k.l)),
       loc: arr.reduce((s, k) => s + k.loc, 0),
     }
   })
@@ -257,19 +261,20 @@ export function genIntraday(code: string, baseMinute: number, crash: boolean): I
   let cumP = 0
   let cumN = 0
   mins.forEach((t, i) => {
-    let p: number
+    let flow: number
     let vol: number
     if (crash && i >= crashAt) {
       // 尾盘 6 分钟：Token 消耗指数级飙升，代码量被砸掉
-      p = baseMinute * (1.5 + (i - crashAt + 1) * 0.7 + rand() * 0.3)
+      flow = baseMinute * (1.5 + (i - crashAt + 1) * 0.7 + rand() * 0.3)
       vol = -Math.round((10000 / 6) * (1 + rand() * 0.3))
     } else {
-      p = baseMinute * (0.55 + rand() * 0.5)
+      flow = baseMinute * (0.55 + rand() * 0.5)
       vol = rand() > 0.85 ? -Math.round(rand() * 40) : Math.round(8 + rand() * rand() * 90)
     }
-    cumP += p
+    // 分时价 = 当日累计 Token 消耗（与日 K 收盘 = 当日总量同口径）。
+    cumP += flow
     cumN += 1
-    points.push({ t, p, avg: cumP / cumN, vol })
+    points.push({ t, p: cumP, avg: cumP / cumN, vol })
   })
   return points
 }
@@ -285,11 +290,12 @@ export function genFiveDay(code: string, daily: Candle[], baseMinute: number): I
     const n = 24
     const bar = day.c / n
     for (let i = 0; i < n; i++) {
-      const p = bar * (0.6 + rand() * 0.8)
+      const flow = bar * (0.6 + rand() * 0.8)
       const vol = Math.round((day.loc / n) * (0.5 + rand()) * (rand() > 0.15 ? 1 : -1))
-      cumP += p
+      // 5日线同样画累计消耗，真实数据由 meter 的 minuteSeriesByDay 提供。
+      cumP += flow
       cumN += 1
-      out.push({ t: day.t + (9.5 + i * (5.5 / n)) * 3600000, p, avg: cumP / cumN, vol })
+      out.push({ t: day.t + (9.5 + i * (5.5 / n)) * 3600000, p: cumP, avg: cumP / cumN, vol })
     }
   }
   // 确保每根 10 分钟线的 Token 量级合理（工作日全天约等于日 K 收盘）

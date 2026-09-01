@@ -1,16 +1,24 @@
 /**
  * Workspace git index for the 最近变更 / git tree / LOC panes.
  *
- * The meter bundle reads each session workspace's git repository directly on
- * the host (no shell interpolation — `git` is executed with an argv list).
+ * The meter bundle reads git repositories directly on the host (no shell
+ * interpolation — `git` is executed with an argv list). A DSH workspace is a
+ * project FOLDER, not necessarily one repository: the index discovers every
+ * nested git repository under the workspace (bounded scan, skipping
+ * `node_modules`/build caches) and merges their commits into one view.
+ * Nested repository paths are prefixed with the repository's workspace-relative
+ * directory, so `sub/project/src/a.ts` remains unambiguous in the merged rows.
+ *
  * Results are cached per workspace with a short TTL; file-mutating tool calls
  * invalidate the affected workspace so the next snapshot poll re-reads it.
  *
- * A workspace that is not a git repository (or where git is unavailable)
+ * A workspace that contains no git repository (or where git is unavailable)
  * yields `null`: clients show an explicit empty state and never fall back to
  * invented data.
  */
 import { execFile } from 'node:child_process'
+import { readdir } from 'node:fs/promises'
+import { relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { WorkspaceChange, WorkspaceLocDay, WorkspaceTreeEntry } from './types.js'
 
@@ -18,7 +26,7 @@ const execFileAsync = promisify(execFile)
 
 /** Maximum git subprocess wall time per command. */
 const GIT_TIMEOUT_MS = 4000
-/** `git log` reads this many commits for change rows + LOC history. */
+/** `git log` reads this many commits per repository for change rows + LOC history. */
 const HISTORY_COMMITS = 2000
 /** Maximum recent-change rows served for one workspace. */
 const MAX_CHANGES = 24
@@ -28,10 +36,31 @@ const MAX_DIFF_ROWS = 6
 const DIFF_MAX_CHARS = 2600
 /** LOC history window (days). */
 const LOC_WINDOW_DAYS = 180
-/** Cache TTL for successful reads (also the HEAD re-check interval). */
+/** Cache TTL for successful reads (also the fingerprint re-check interval). */
 const DEFAULT_TTL_MS = 30_000
-/** Negative-cache TTL (not a git repository / git failure). */
+/** Negative-cache TTL (no git repository / git failure). */
 const FAILURE_TTL_MS = 60_000
+/** Nested-repository discovery bounds: directory depth. */
+const SCAN_MAX_DEPTH = 8
+/** Nested-repository discovery bounds: directories read per workspace. */
+const SCAN_MAX_DIRS = 3000
+/** Directories that are never project repositories and may be huge. */
+const SCAN_SKIP = new Set([
+  '.git',
+  'node_modules',
+  'bower_components',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '.parcel-cache',
+  'coverage',
+  '__pycache__',
+  'venv',
+  '.venv',
+])
 
 /** Structural value attached to one workspace row in the snapshot. */
 export interface WorkspaceGitView {
@@ -56,6 +85,23 @@ interface GitCommit {
 interface PendingChange {
   row: WorkspaceChange
   hash: string
+  /** Repository-relative file path for `git show <hash> -- <path>`. */
+  repoPath: string
+}
+
+/** One discovered repository inside a workspace folder. */
+export interface GitRepoRef {
+  /** Absolute repository root used as `git -C` cwd. */
+  root: string
+  /** Workspace-relative directory prefix ('' for the workspace root itself). */
+  prefix: string
+}
+
+/** A fingerprint of all repositories whose history feeds one cached view. */
+interface RepoFingerprint {
+  root: string
+  prefix: string
+  head: string
 }
 
 export type GitRunner = (cwd: string, args: readonly string[]) => Promise<string | null>
@@ -86,6 +132,15 @@ function localTime(ts: number): string {
 function localDay(ts: number): string {
   const d = new Date(ts)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function toPosixPath(value: string): string {
+  return value === sep ? value : value.split(sep).join('/')
+}
+
+/** Join a nested repository prefix with a repository-relative git path. */
+function prefixPath(prefix: string, path: string): string {
+  return prefix.length === 0 ? path : `${prefix}/${path}`
 }
 
 /** Parse `git log --pretty=format:%x1e%H%x1f%ct%x1f%s --numstat`. */
@@ -183,17 +238,21 @@ export function buildGitTree(files: readonly GitFileStat[]): WorkspaceTreeEntry[
   return [...rows.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 }
 
-/** Recent change rows: one row per committed file, newest first. */
-export function buildChanges(commits: readonly GitCommit[]): PendingChange[] {
+/**
+ * Recent change rows: one row per committed file, newest first.
+ * `prefix` makes nested-repository paths workspace-relative.
+ */
+export function buildChanges(commits: readonly GitCommit[], prefix = ''): PendingChange[] {
   const rows: PendingChange[] = []
   for (const commit of commits) {
     for (const file of commit.files) {
       rows.push({
         hash: commit.hash,
+        repoPath: file.path,
         row: {
           ts: commit.ts,
           time: localTime(commit.ts),
-          path: file.path,
+          path: prefixPath(prefix, file.path),
           msg: commit.files.length > 1 ? `${commit.subject}（${commit.files.length} 个文件）` : commit.subject,
           add: file.add,
           del: file.del,
@@ -210,36 +269,141 @@ function truncateDiff(text: string): string {
   return `${text.slice(0, DIFF_MAX_CHARS)}\n…(截断)`
 }
 
+/** Verify one directory is a git repository with at least one commit. */
+async function hasHead(root: string, git: GitRunner): Promise<boolean> {
+  const text = await git(root, ['rev-parse', 'HEAD'])
+  return text !== null && text.trim().length > 0
+}
+
+/**
+ * Discover every git repository under a workspace folder (including the
+ * workspace root itself). The scan is bounded in depth and directory count and
+ * skips dependency/build directories; `.git` files (worktrees/submodules) are
+ * recognized. A discovered repository must have at least one commit.
+ * @param cwd - workspace folder to scan.
+ * @param git - git runner (injected in tests).
+ * @returns repository roots with workspace-relative prefixes, path-ascending.
+ */
+export async function discoverGitRoots(cwd: string, git: GitRunner = runGit): Promise<GitRepoRef[]> {
+  const base = resolve(cwd)
+  const found = new Map<string, GitRepoRef>()
+  const queue: { dir: string; depth: number }[] = [{ dir: base, depth: 0 }]
+  let scanned = 0
+  while (queue.length > 0 && scanned < SCAN_MAX_DIRS) {
+    const item = queue.shift()
+    if (item === undefined) break
+    scanned += 1
+    let entries
+    try {
+      entries = await readdir(item.dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.name === '.git') {
+        const root = item.dir
+        if (!found.has(root) && await hasHead(root, git)) {
+          found.set(root, { root, prefix: toPosixPath(relative(base, root)) })
+        }
+        continue
+      }
+      if (SCAN_SKIP.has(entry.name) || item.depth >= SCAN_MAX_DEPTH) continue
+      // Symlinked directories can escape the workspace or create cycles; skip them.
+      if (entry.isDirectory()) queue.push({ dir: resolve(item.dir, entry.name), depth: item.depth + 1 })
+    }
+  }
+  return [...found.values()].sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0))
+}
+
+/** Merge daily LOC series from multiple repositories (same date sums). */
+function mergeLocSeries(series: readonly WorkspaceLocDay[][]): WorkspaceLocDay[] {
+  const byDate = new Map<string, { added: number; deleted: number }>()
+  for (const rows of series) {
+    for (const day of rows) {
+      const target = byDate.get(day.date) ?? { added: 0, deleted: 0 }
+      target.added += day.added
+      target.deleted += day.deleted
+      byDate.set(day.date, target)
+    }
+  }
+  return [...byDate.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, day]) => ({ date, added: day.added, deleted: day.deleted, net: day.added - day.deleted }))
+}
+
+/** Merge git trees from multiple repositories (same path sums). */
+function mergeTrees(trees: readonly WorkspaceTreeEntry[][]): WorkspaceTreeEntry[] {
+  const rows = new Map<string, WorkspaceTreeEntry>()
+  for (const tree of trees) {
+    for (const row of tree) {
+      const target = rows.get(row.path)
+      if (target === undefined) rows.set(row.path, { ...row })
+      else {
+        target.add += row.add
+        target.del += row.del
+        target.directory = target.directory === true || row.directory === true
+      }
+    }
+  }
+  return [...rows.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+}
+
+/** Partial git view collected from one repository. */
+interface RepoView {
+  changes: WorkspaceChange[]
+  gitTree: WorkspaceTreeEntry[]
+  locSeries: WorkspaceLocDay[]
+}
+
+/** Merge per-repository views into one workspace view. */
+function mergeRepoViews(views: readonly RepoView[]): WorkspaceGitView {
+  // Same-timestamp rows keep the source order (git log already newest-first);
+  // stable sort preserves that order across multiple repositories too.
+  const changes = views
+    .flatMap((view) => view.changes)
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, MAX_CHANGES)
+  return {
+    changes,
+    gitTree: mergeTrees(views.map((view) => view.gitTree)),
+    locSeries: mergeLocSeries(views.map((view) => view.locSeries)),
+  }
+}
+
 /**
  * Cached, per-workspace git view with in-flight deduplication.
  *
- * The TTL only governs how often `git rev-parse HEAD` runs (cheap); the
- * expensive `git log --numstat` re-read happens only when HEAD actually moved.
- * Committing is the only thing that changes committed history, so a large
- * repository is no longer re-walked every TTL window.
+ * The TTL only governs how often the repository fingerprint is re-read (a
+ * bounded directory scan plus cheap `git rev-parse HEAD` per discovered
+ * repository); the expensive `git log --numstat` re-read happens only when a
+ * repository appeared/disappeared or its HEAD moved. Committing is the only
+ * thing that changes committed history, so a large workspace is not re-walked
+ * every TTL window.
  */
 export class WorkspaceGitIndex {
-  private readonly cache = new Map<string, { at: number; head: string | null; value: WorkspaceGitView }>()
+  private readonly cache = new Map<string, { at: number; repos: RepoFingerprint[]; value: WorkspaceGitView }>()
   private readonly failures = new Map<string, { at: number }>()
-  private readonly inflight = new Map<string, Promise<WorkspaceGitView | null>>()
+  private readonly inflight = new Map<string, Promise<{ repos: RepoFingerprint[]; value: WorkspaceGitView } | null>>()
 
   constructor(
     private readonly ttlMs = DEFAULT_TTL_MS,
     private readonly git: GitRunner = runGit,
+    private readonly discover: (cwd: string, git: GitRunner) => Promise<GitRepoRef[]> = discoverGitRoots,
   ) {}
 
   /**
-   * Read (or serve from cache) the git view for one workspace; null = unavailable.
-   * `now` is the caller's clock (the snapshot's `generatedAt`) and is used for
-   * both TTL checks and cache stamps, so the two never disagree.
+   * Read (or serve from cache) the aggregated git view for one workspace;
+   * null = no readable repository under it. `now` is the caller's clock (the
+   * snapshot's `generatedAt`) and is used for both TTL checks and cache
+   * stamps, so the two never disagree.
    */
   async view(cwd: string, now = Date.now()): Promise<WorkspaceGitView | null> {
     const hit = this.cache.get(cwd)
     if (hit !== undefined) {
       if (now - hit.at < this.ttlMs) return hit.value
-      // TTL elapsed: only the HEAD fingerprint is re-read, not the whole log.
-      const head = await this.readHead(cwd)
-      if (head !== null && head === hit.head) {
+      // TTL elapsed: only the fingerprint is re-read, not the whole log.
+      const repos = await this.inspect(cwd)
+      if (repos !== null && sameFingerprints(repos, hit.repos)) {
         hit.at = now
         return hit.value
       }
@@ -251,14 +415,14 @@ export class WorkspaceGitIndex {
       pending = this.collect(cwd).finally(() => { this.inflight.delete(cwd) })
       this.inflight.set(cwd, pending)
     }
-    const value = await pending
-    if (value === null) {
+    const collected = await pending
+    if (collected === null) {
       this.failures.set(cwd, { at: now })
       this.cache.delete(cwd)
     } else {
-      this.cache.set(cwd, { at: now, head: await this.readHead(cwd), value })
+      this.cache.set(cwd, { at: now, repos: collected.repos, value: collected.value })
     }
-    return value
+    return collected === null ? null : collected.value
   }
 
   /** Drop one workspace's cache, or all caches when cwd is omitted. */
@@ -280,8 +444,20 @@ export class WorkspaceGitIndex {
     return head.length > 0 ? head : null
   }
 
-  private async collect(cwd: string): Promise<WorkspaceGitView | null> {
-    const historyText = await this.git(cwd, [
+  /** Discover repositories and read their HEAD fingerprints. */
+  private async inspect(cwd: string): Promise<RepoFingerprint[] | null> {
+    const refs = await this.discover(cwd, this.git)
+    const repos = await Promise.all(refs.map(async (ref) => {
+      const head = await this.readHead(ref.root)
+      return head === null ? undefined : { root: ref.root, prefix: ref.prefix, head }
+    }))
+    const live = repos.filter((repo): repo is RepoFingerprint => repo !== undefined)
+    return live.length > 0 ? live : null
+  }
+
+  /** Read one repository's history and prefix its paths for the workspace. */
+  private async collectRepo(ref: GitRepoRef): Promise<RepoView | null> {
+    const historyText = await this.git(ref.root, [
       'log',
       `--max-count=${HISTORY_COMMITS}`,
       '--pretty=format:%x1e%H%x1f%ct%x1f%s',
@@ -293,20 +469,43 @@ export class WorkspaceGitIndex {
     const commits = parseHistory(historyText)
     if (commits.length === 0) return null
 
-    const pending = buildChanges(commits)
-    const diffs = await Promise.all(pending.slice(0, MAX_DIFF_ROWS).map(async ({ row, hash }) => {
-      const text = await this.git(cwd, ['show', hash, '--format=', '--no-ext-diff', '--unified=3', '--', row.path])
+    const pending = buildChanges(commits, ref.prefix)
+    const diffs = await Promise.all(pending.slice(0, MAX_DIFF_ROWS).map(async ({ row, hash, repoPath }) => {
+      const text = await this.git(ref.root, ['show', hash, '--format=', '--no-ext-diff', '--unified=3', '--', repoPath])
       if (text === null || text.length === 0) return row
       return { ...row, diff: truncateDiff(text) }
     }))
     const changes = [...diffs, ...pending.slice(MAX_DIFF_ROWS).map(({ row }) => row)]
 
-    const treeText = await this.git(cwd, ['show', 'HEAD', '--numstat', '--pretty=format:', '--no-renames'])
+    const treeText = await this.git(ref.root, ['show', 'HEAD', '--numstat', '--pretty=format:', '--no-renames'])
     const treeFiles = treeText === null ? [] : parseNumstat(treeText)
     return {
       changes,
-      gitTree: treeFiles.length > 0 ? buildGitTree(treeFiles) : [],
+      gitTree: treeFiles.length > 0
+        ? buildGitTree(treeFiles.map((file) => ({ ...file, path: prefixPath(ref.prefix, file.path) })))
+        : [],
       locSeries: foldLocDays(commits),
     }
   }
+
+  /** Discover, read, and merge every repository under one workspace. */
+  private async collect(cwd: string): Promise<{ repos: RepoFingerprint[]; value: WorkspaceGitView } | null> {
+    const repos = await this.inspect(cwd)
+    if (repos === null) return null
+    const views = await Promise.all(repos.map((repo) => this.collectRepo({ root: repo.root, prefix: repo.prefix })))
+    const live = views.filter((view): view is RepoView => view !== null)
+    if (live.length === 0) return null
+    return { repos, value: mergeRepoViews(live) }
+  }
+}
+
+function sameFingerprints(left: readonly RepoFingerprint[], right: readonly RepoFingerprint[]): boolean {
+  return left.length === right.length
+    && left.every((repo, index) => {
+      const other = right[index]
+      return other !== undefined
+        && repo.root === other.root
+        && repo.prefix === other.prefix
+        && repo.head === other.head
+    })
 }

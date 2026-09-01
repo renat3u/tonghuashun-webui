@@ -6,6 +6,7 @@ import {
   daySeriesToPoints,
   isSnapshotLike,
   mapSnapshot,
+  minuteSeriesByDayToIntraday,
   minuteSeriesToIntraday,
   minuteSeriesToTape,
   minuteToHours,
@@ -88,12 +89,35 @@ test('minuteSeriesToIntraday / ToTape', () => {
   const points = minuteSeriesToIntraday(SNAP.minuteSeries)
   assert.equal(points.length, 2)
   assert.equal(points[0].t, 9.5)
-  assert.equal(points[1].p, 200)
+  // 分时主图是当日累计消耗；分时成交（每分钟流量）由 tape 单独表达。
+  assert.equal(points[0].p, 100)
+  assert.equal(points[1].p, 300)
   assert.equal(points[1].avg, 150)
   const tape = minuteSeriesToTape(SNAP.minuteSeries)
   assert.equal(tape.length, 2)
   assert.equal(tape[0].time, '09:31') // 最新在前
   assert.equal(tape[0].delta, 100)
+})
+
+test('minuteSeriesByDayToIntraday 用真实分钟桶生成 5 日累计曲线', () => {
+  const points = minuteSeriesByDayToIntraday([
+    { date: '2026-08-12', minutes: [{ minute: '09:30', tokens: 100, inputTokens: 100, outputTokens: 0 }] },
+    { date: '2026-08-13', minutes: [
+      { minute: '09:31', tokens: 200, inputTokens: 200, outputTokens: 0 },
+      { minute: '09:32', tokens: 300, inputTokens: 300, outputTokens: 0 },
+    ] },
+  ])
+  assert.equal(points.length, 3)
+  assert.equal(points[0].p, 100)
+  assert.equal(points[2].p, 600)
+  assert.equal(points[2].avg, 200)
+  const withHistory = mapSnapshot({ ...SNAP, minuteSeriesByDay: [
+    { date: '2026-08-12', minutes: SNAP.minuteSeries },
+    { date: '2026-08-13', minutes: SNAP.minuteSeries },
+  ] })
+  assert.equal(withHistory.fiveDay.length, 4)
+  assert.equal(withHistory.fiveDay[0].p, 100)
+  assert.equal(withHistory.fiveDay[3].p, 600)
 })
 
 test('byModelToFlow 排序与占比', () => {
@@ -149,12 +173,16 @@ test('mapSnapshot 映射真实 changes / gitTree / locSeries（无 git 数据时
 test('daySeriesToPoints 截取近 N 日', () => {
   const points = daySeriesToPoints([day('2026-08-10', 1), day('2026-08-11', 2), day('2026-08-12', 3), day('2026-08-13', 4)], 2)
   assert.equal(points.length, 2)
-  assert.equal(points[1].p, 4)
+  // 窗口内累计：3 + 4。
+  assert.equal(points[0].p, 3)
+  assert.equal(points[1].p, 7)
 })
 
 test('daySeriesToPoints 均值为滚动均值（不再恒为 0 压扁纵轴）', () => {
   const points = daySeriesToPoints([day('2026-08-12', 100), day('2026-08-13', 300)], 2)
+  assert.equal(points[0].p, 100)
   assert.equal(points[0].avg, 100)
+  assert.equal(points[1].p, 400)
   assert.equal(points[1].avg, 200)
   // 纵轴下界取 min(p, avg)：均值不为 0，5 日图不会被拉到 0
   assert.ok(points.every((p) => p.avg > 0))

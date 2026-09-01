@@ -17,9 +17,10 @@ function usageEvent(seq: number, time: number, usage: Record<string, unknown>): 
 
 const USAGE = { inputTokens: 100, outputTokens: 50, cacheReadTokens: 10, reasoningTokens: 5 }
 
-test('usageTokens 合计所有不相交桶', () => {
-  assert.equal(usageTokens(USAGE), 165)
+test('usageTokens 合计不相交桶，reasoning 已含在 output 中不重复加', () => {
+  assert.equal(usageTokens(USAGE), 160)
   assert.equal(usageTokens({ inputTokens: 1, outputTokens: 2 }), 3)
+  assert.equal(usageTokens({ inputTokens: 1, outputTokens: 2, reasoningTokens: 9 }), 3)
 })
 
 test('从游标之后开始折叠并推进游标', () => {
@@ -56,6 +57,38 @@ test('assistant/message 带 usage 时生成记录，字段完整', () => {
   assert.equal(r.cacheReadTokens, 10)
   assert.equal(r.cacheWriteTokens, 0)
   assert.equal(r.reasoningTokens, 5)
+})
+
+test('token 按 step/request/chunk 时间线分摊且总量守恒', () => {
+  const start = new Date(2026, 7, 13, 10, 30, 0).getTime()
+  const events = [
+    event('step/start', 0, start, { turn: 2, step: 3 }),
+    event('request/header', 1, start + 500, { header: { config: { model: 'm1' } } }),
+    event('assistant/chunk', 2, start + 10_000, { turn: 2, step: 3, chunk: { type: 'text-delta', text: 'aaaa' } }),
+    event('assistant/chunk', 3, start + 70_000, { turn: 2, step: 3, chunk: { type: 'text-delta', text: 'bbbbbbbbbbbb' } }),
+    usageEvent(4, start + 120_000, USAGE),
+  ]
+  const records: UsageRecord[] = []
+  foldSession(session(events), { consumed: 0 }, (r) => records.push(r))
+  // input/cache 落在 request 时刻；output 按 chunk 权重跨分钟；reasoning 按跨度分摊。
+  assert.ok(records.length >= 3)
+  const total = records.reduce((sum, r) => sum + r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens, 0)
+  assert.equal(total, 160)
+  assert.equal(records.reduce((sum, r) => sum + r.reasoningTokens, 0), 5)
+  const requestSlice = records.find((r) => r.ts === start + 500)
+  assert.ok(requestSlice)
+  assert.equal(requestSlice.inputTokens, 100)
+  assert.equal(requestSlice.cacheReadTokens, 10)
+  assert.equal(records.every((r) => r.model === 'm1'), true)
+})
+
+test('热插入（无 step/start 游标）保持单点归属不回退', () => {
+  const records: UsageRecord[] = []
+  foldSession(session([usageEvent(0, 1000, USAGE)]), { consumed: 0 }, (r) => records.push(r))
+  assert.equal(records.length, 1)
+  assert.equal(records[0]?.ts, 1000)
+  assert.equal(records[0]?.inputTokens, 100)
+  assert.equal(records[0]?.outputTokens, 50)
 })
 
 test('缺 usage / 缺必填数字时不生成记录，但游标仍推进', () => {
