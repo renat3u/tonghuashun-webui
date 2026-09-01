@@ -15,8 +15,9 @@
 |---|---|---|
 | 工作区 / 会话 / 队列 / 子代理 / 任务 | slots + `useSessions` / `useWorkspaces` | `client/index.ts` 注册 root + terminal.chat |
 | 对话 / Trajectory / 检查点 | 会话节点快照（`useSession`） | 本包自带 6 个 conversation definition + 1 个 chat view builder |
-| Token 指数 / K 线 / 分时 / 流向 | `GET /tonghuashun/snapshot` | `snapshot.ts` 的 `mapSnapshot` |
-| 最近变更 / git tree / LOC | 同上快照的 `workspaces[].changes / gitTree / locSeries` | meter 插件直接读取工作区 git 仓库；非 git 仓库字段缺省 → UI 显示空态 |
+| Token 指数 / K 线 / 分时 / 流向 | `GET /tonghuashun/snapshot` | `snapshot.ts` 的 `mapSnapshot`；分时主图/5日图为累计口径，分时成交为每分钟流量 |
+| 模型选择 | `connection.api.sessions.models / selectModel` | `makeChatOps` 读取 Host 模型目录并走 selectModel RPC；连接层不可用时退回 `/model` 命令 |
+| 最近变更 / git tree / LOC | 同上快照的 `workspaces[].changes / gitTree / locSeries` | meter 插件递归聚合工作区文件夹下的所有 git 仓库；无仓库字段缺省 → UI 显示空态 |
 | 权限当前值 | 会话 `permissions` 投影 | `session.projections.faceOf('permissions')`，按钮实时显示当前 preset；缺失显示“未知” |
 | 文件搜索 | `remote.fileReferences.list`（file-reference 索引） | 环境未装配该 remote namespace 时显示“文件索引当前不可用”，不回退模拟 |
 
@@ -25,10 +26,13 @@
 插件快照契约（本包 `src/bridge/snapshot.ts` 已含类型与 `fetchSnapshot()`）：
 
 - `GET /tonghuashun/snapshot` → `Snapshot`（分钟桶 / 日聚合 / 工作区 / 模型）
+- `minuteSeriesByDay?: { date, minutes[] }[]` — 最近若干天的真实分钟桶，5 日图直接消费；
+  旧版 meter 缺省时前端退回 `daySeries` 的日累计点（仍为真实日总量）
 - `workspaces[]` 新增可选 git 字段：
-  - `changes: { ts, time, path, msg, add, del, diff? }[]` — 最近提交（每文件一行，最新在前）
-  - `gitTree: { depth, path, add, del, directory? }[]` — HEAD 提交文件树（含聚合目录行）
-  - `locSeries: { date, added, deleted, net }[]` — 近 180 天净代码量，合并进日 K `loc` 子图
+  - `changes: { ts, time, path, msg, add, del, diff? }[]` — 工作区下所有仓库的最近提交
+    （每文件一行，最新在前；嵌套仓库路径带相对前缀）
+  - `gitTree: { depth, path, add, del, directory? }[]` — 各仓库 HEAD 提交文件树的合并视图（含聚合目录行）
+  - `locSeries: { date, added, deleted, net }[]` — 各仓库近 180 天净代码量按日相加，合并进日 K `loc` 子图
 - 无 git 数据时字段**缺省**，前端绝不回退模拟数据；diff 只有真实 git show 可读时才附带。
 
 ## 旧 provider 接口（已弃用，保留仅为历史契约）

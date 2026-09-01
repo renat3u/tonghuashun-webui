@@ -63,8 +63,9 @@ Agent / 开发者。所有路径均为 DSH 通用环境变量或占位符，请�
   轮询 `GET /tonghuashun/snapshot`。
 - 快照字段映射：
   - `workspaces` → 左栏关注项目 / 右栏行情；
-  - `daySeries` → 日K / 周K / 月K；
-  - `minuteSeries` → 分时 / 5日 / 分时成交；
+  - `daySeries` → 日K / 周K / 月K（周/月收盘 = 周期内日成交量合计）；
+  - `minuteSeries` → 当日分时主图（累计）与分时成交（每分钟流量）；
+  - `minuteSeriesByDay` → 5日图真实跨日分钟桶；
   - `today.byModel` → token 流向；
   - `today` / `totalTokens` → 顶部指数与右栏汇总。
 - 因此只要 meter 有数据，前端即可正常获取并展示。

@@ -82,8 +82,8 @@ deploy/
   profile 组合（bundle patch 按 id 覆盖），因此上游 web-app 新增 UI 行时 overlay 需
   同步维护；激进替换默认入口不属于 hub 插件规范（plugin_check），本包定位为
   用户自有部署。
-- **数据仍是模拟**：接 `GET /tonghuashun/snapshot` 的映射（分钟→分时、日→日K、
-  工作区→关注项目、byModel→token流向）未完成，见 `src/bridge/snapshot.ts` 的 TODO。
+- **热重载窗口**：'root' 是 single 槽，热重载时新 fiber 可能在旧 fiber disposer
+  生效前执行 apply；本插件对同 priority 冲突做退避重试（最多约 10s），期间保留旧终端。
 - 全局样式直写 body/#root（终端接管整页）；与外壳主题 token 的冲突在 WSL
   环境实测后调校。
 - 未做 CSS Modules 化的组件级样式（沿用设计稿的全局主题表）。

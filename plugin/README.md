@@ -74,6 +74,9 @@ npm run backfill
     "sessions": 1, "toolCalls": 261
   },
   "minuteSeries": [{ "minute": "00:07", "tokens": 982550, "inputTokens": 2508, "outputTokens": 3052 }],
+  "minuteSeriesByDay": [
+    { "date": "2026-08-12", "minutes": [{ "minute": "09:30", "tokens": 1000, "…": "…" }] }
+  ],
   "daySeries":    [{ "date": "2026-08-13", "tokens": 39736102, "…": "…" }],
   "workspaces":   [{
     "cwd": "/work/example", "tokens": 41123992, "sessions": 1, "toolCalls": 298,
@@ -85,19 +88,25 @@ npm run backfill
 }
 ```
 
-与前端视图的映射：`minuteSeries` → 分时成交（每分钟 Token 消耗），`daySeries` → 日 K，
-`workspaces` → 左栏关注项目，`today.byModel` → token 流向；
+与前端视图的映射：`minuteSeries` → 当日分时（前端按分钟累计成主图曲线，成交表展示每分钟流量），
+`minuteSeriesByDay` → 5 日图的真实跨日分钟桶，`daySeries` → 日 K，
+`workspaces` → 左栏关注项目，`today.byModel` → token 流向。
 
 > `minuteSeries` **只含当天**：分钟桶内部按「日期 + HH:MM」分桶，历史（含回填）不会
-> 叠加到今天的同一时刻；线上格式仍是裸 `HH:MM`。历史消耗体现在 `daySeries` 中。
+> 叠加到今天的同一时刻；线上格式仍是裸 `HH:MM`。历史分钟桶经 `minuteSeriesByDay`
+> 供 5 日图使用，历史日总量体现在 `daySeries` 中。
 
 `workspaces[].changes` → 最近变更，`workspaces[].gitTree` → git tree，
 `workspaces[].locSeries` → K 线子图的代码量柱。
 
 ## git 采集（最近变更 / git tree / LOC）
 
-- 插件直接对快照中的每个工作区执行 `git log / git show`（argv 调用，不经过 shell），
-  读取最近提交、HEAD 文件树与近 180 天按日净增删行数；
+- 左侧展示的是**项目文件夹**：插件会在每个工作区下递归发现全部 git 仓库（含 `.git`
+  文件形态的 worktree/submodule），合并其提交历史、HEAD 文件树与近 180 天按日净增删行数；
+  嵌套仓库的路径带工作区相对前缀（如 `app/src/a.ts`），多个仓库同日 LOC 相加；
+- 发现扫描有界（深度 8、最多读 3000 个目录）并跳过 `node_modules`/`dist`/`build` 等
+  依赖与构建目录；
+- 插件直接执行 `git log / git show`（argv 调用，不经过 shell）；
 - 结果按工作区缓存 30 秒；会话总线上出现文件修改类工具调用（edit/write/str_replace_editor 等）
   时使对应工作区缓存失效；
 - 非 git 仓库 / git 不可用时对应字段**缺省**，前端显示空态，不伪造数据；
@@ -108,13 +117,21 @@ npm run backfill
 
 - **增量采集**：插件只统计加载之后发生的事件。会话首次进入视野时游标从当前日志尾部开始，
   因此重启不会重复计数；安装前的历史如需补录，请显式运行 `npm run backfill`；
+- **Token 时间线**：`assistant/message` 报告的 usage 会按真实事件时间分摊进分钟桶——
+  input/cache 落在 `request/header` 时刻，output/reasoning 按 `assistant/chunk` 流式
+  delta 权重（无 chunk 时按 step 时长等分）分摊，一个回合可能写多行 usage.jsonl；
+  因此分时不再把整轮消耗压在最终消息那一分钟；
+- **Token 总量口径**：`inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens`；
+  `reasoningTokens` 已包含在 `outputTokens` 中，只在模型明细里单独展示，不重复计总量
+  （与 `@deepseek-ai/dsh-token-meter` 一致）；
 - **存储降级**：usage/days 文件不可写时仅告警并继续内存记账——计量插件不会拖垮 harness；
 - **usage.jsonl 每行**：`{ ts, sessionId, cwd?, provider?, model?, turn, step, inputTokens,
-  outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens }`。
+  outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens }`；同一 turn/step
+  允许出现多行（不同时间片）。
 
 ## 开发
 
-- `npm run build` / `npm test`（25 例，node:test，含 git 解析与真实临时仓库集成）/ `npm run smoke:real-session`（解码
+- `npm run build` / `npm test`（node:test，含 git 解析、嵌套仓库与真实临时仓库集成）/ `npm run smoke:real-session`（解码
   `$DSH_HOME/sessions/**/session.jsonl.zstd` 真实日志跑完整折叠，默认取最大会话，可传路径）；
 - 构建对 `@deepseek-ai/cordis` 的类型解析走 `tsconfig.json` 的 `paths` → 本机 DSH checkout 的
   `vendor/cordis/lib/types/index.d.ts`（TS ≥ 5.7 + `moduleResolution: bundler`，
