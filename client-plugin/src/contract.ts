@@ -237,6 +237,28 @@ export interface SessionBindingLike {
   session: SessionFaceLike
 }
 
+/** 模型目录中的一条可选模型（dsh ModelCatalogEntry 的结构子集）。 */
+export interface ModelOptionLike {
+  /** Provider 拥有方模型 id（选择时回传该 id）。 */
+  id: string
+  name: string
+  description?: string
+  reasoning?: { defaultEffort?: string }
+}
+
+/** 模型目录中的一个 provider 分组。 */
+export interface ModelGroupLike {
+  id: string
+  name: string
+  models: readonly ModelOptionLike[]
+}
+
+/** connection.api.sessions.models 的返回值（结构子集）。 */
+export interface ModelDirectoryLike {
+  current: { provider: string; model: string } | null
+  groups: readonly ModelGroupLike[]
+}
+
 /** 会话列表行（dsh SessionSummary 的结构子集）。 */
 export interface SessionSummaryLike {
   id: string
@@ -338,6 +360,10 @@ export interface ChatOps {
   newSession(): void
   /** 执行一条斜杠命令（如 /model deepseek-v4）。 */
   command(line: string): Promise<boolean>
+  /** 读取会话模型目录（连接层 sessions.models RPC；不可用时返回 null）。 */
+  loadModelDirectory?(): Promise<ModelDirectoryLike | null>
+  /** 经 sessions.selectModel RPC 选择模型；接受模型 id / 显示名 / `provider/id`。 */
+  selectModel?(model: string): Promise<boolean>
   /** 对 pending queue 做编辑/移除/steer。 */
   updateQueue?(itemId: string, action: QueueActionLike): Promise<boolean>
   /** 读取当前会话的权限预设投影（无投影服务时为 undefined）。 */
@@ -423,6 +449,8 @@ export interface RootProps extends RootOps {
 /** root 注册参数：终端界面声明子槽 terminal.chat（single / session-maybe）。 */
 export interface RootRegisterOptions {
   name: 'root'
+  /** 低于默认 UI 的 priority 0：single 槽 lowest renders，无需 overlay 也能遮蔽 ui-layout。 */
+  priority?: number
   children: {
     'terminal.chat': { kind: 'single'; scope: 'session-maybe' }
   }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { TerminalChat } from './TerminalChat'
-import type { ChatPanelProps, ConversationNodeLike, PermissionSelectLike } from '../contract'
+import type { ChatPanelProps, ConversationNodeLike, ModelDirectoryLike, PermissionSelectLike } from '../contract'
+import { modelOptionIds } from '../lib/model-directory'
 import {
   lastModelOf,
   nodesToMessages,
@@ -22,11 +23,26 @@ export function ChatPanel(props: ChatPanelProps) {
     useSession, sessionId, send, cancel, newSession, command, updateQueue,
     selectedName, sessionTitle, sessionCwd, modelOptions,
     permissionSelect, subscribePermission,
+    loadModelDirectory, selectModel,
   } = props
   const snapshot = useSession((s) => s)
   const [localError, setLocalError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [permission, setPermission] = useState<PermissionSelectLike | undefined>(() => permissionSelect?.())
+  const [modelDirectory, setModelDirectory] = useState<ModelDirectoryLike | null>(null)
+  const [selectedModel, setSelectedModel] = useState<string | null>(null)
+
+  // 模型目录来自连接层 sessions.models RPC；目录加载前退回快照中的历史模型列表。
+  useEffect(() => {
+    if (loadModelDirectory === undefined) return
+    let alive = true
+    void loadModelDirectory().then((directory) => {
+      if (!alive || directory === null) return
+      setModelDirectory(directory)
+      if (directory.current?.model !== undefined) setSelectedModel(directory.current.model)
+    })
+    return () => { alive = false }
+  }, [loadModelDirectory, sessionId])
 
   // permissions 投影是独立于 conversation 快照的可观察源：订阅它保持按钮实时。
   useEffect(() => {
@@ -76,13 +92,35 @@ export function ChatPanel(props: ChatPanelProps) {
 
   const directory = sessionCwd ?? sessionTitle ?? (sessionId === undefined ? '~/tonghuashun-harness' : sessionId)
 
+  /** 模型列表：目录优先；目录缺失时退回 meter 快照见过的模型 id。 */
+  const selectableModels = useMemo(
+    () => modelOptionIds(modelDirectory, modelOptions ?? []),
+    [modelDirectory, modelOptions],
+  )
+
+  /** 当前模型：目录 current 是 Host 单点事实；无目录时退回会话最后一条助手消息的模型。 */
+  const currentModel = selectedModel ?? (snapshot ? lastModelOf(snapshot) : null)
+
+  /** 模型选择：真实环境走 sessions.selectModel RPC，失败由 composer 提示。 */
+  const onSelectModel = (value: string): Promise<boolean> => {
+    if (selectModel === undefined) return Promise.resolve(false)
+    return selectModel(value).then(
+      (ok) => {
+        if (ok) setSelectedModel(value)
+        return ok
+      },
+      () => false,
+    )
+  }
+
   return (
     <TerminalChat
       selectedName={selectedName}
       directory={directory}
       sessionId={sessionId ?? null}
-      model={snapshot ? lastModelOf(snapshot) : null}
-      modelOptions={modelOptions}
+      model={currentModel}
+      modelOptions={selectableModels}
+      onSelectModel={selectModel === undefined ? undefined : onSelectModel}
       version={VERSION}
       messages={messages}
       steps={steps}

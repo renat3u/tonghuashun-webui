@@ -82,6 +82,8 @@ export interface TerminalChatProps {
   model: string | null
   /** 真实快照中的模型列表（模型切换弹层建议）。 */
   modelOptions?: readonly string[]
+  /** 连接层模型选择 RPC；缺失时退回 /model 命令。 */
+  onSelectModel?: (model: string) => Promise<boolean> | boolean
   /** 当前权限预设投影（真实 DSH 提供；缺失显示“未知”）。 */
   permission?: PermissionSelectLike
   /** 客户端版本。 */
@@ -123,12 +125,14 @@ export interface TerminalChatProps {
 
 /** 纯表现组件：对话 / Trajectory / 检查点三页签 + composer。数据全部来自 props。 */
 export function TerminalChat(props: TerminalChatProps) {
-  const { selectedName, directory, sessionId, model, modelOptions, permission, version, messages, steps, checkpoints = [], queue = [], running, partialText, error, hasSession, sending = false, onSend, onCancel, onNewSession, onCommand, onUpdateQueue, onDismissError } = props
+  const { selectedName, directory, sessionId, model, modelOptions, onSelectModel, permission, version, messages, steps, checkpoints = [], queue = [], running, partialText, error, hasSession, sending = false, onSend, onCancel, onNewSession, onCommand, onUpdateQueue, onDismissError } = props
   const [tab, setTab] = useState<Tab>('conv')
   const [openSteps, setOpenSteps] = useState<ReadonlySet<number>>(() => new Set())
   const [draft, setDraft] = useState('')
   const [modelOpen, setModelOpen] = useState(false)
   const [modelDraft, setModelDraft] = useState(model ?? '')
+  /** 选择成功后的即时回显；Host 下一次目录刷新会覆盖为 current。 */
+  const [displayModel, setDisplayModel] = useState<string | null>(model)
   const [permOpen, setPermOpen] = useState(false)
   const [permDraft, setPermDraft] = useState('')
   const [composerNotice, setComposerNotice] = useState<string | null>(null)
@@ -146,6 +150,16 @@ export function TerminalChat(props: TerminalChatProps) {
     [permission],
   )
   const permCurrent = permission?.currentValue
+
+  // 外部模型事实更新时回显（快照 lastModel / Host 目录 current）。
+  useEffect(() => {
+    if (model !== null && model !== displayModel) {
+      setDisplayModel(model)
+      setModelDraft(model)
+    }
+    // 仅在 model 变化时同步；选择成功的本地回显不被旧值覆盖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model])
 
   // composer 提示自动消失（附件类型 / 命令不可用等）
   useEffect(() => {
@@ -245,17 +259,24 @@ export function TerminalChat(props: TerminalChatProps) {
   }
 
   /**
-   * 执行 /model 切换。列表点击传显式 name，避免 setState 未落地时
+   * 执行模型切换。真实环境优先走 sessions.selectModel RPC；连接层未提供
+   * 该 RPC 时退回 /model 命令。列表点击传显式 name，避免 setState 未落地时
    * 读到旧草稿（闭包）导致第一次点击提交旧值。
    */
   const submitModel = async (name?: string) => {
     const value = (name ?? modelDraft).trim()
     if (value.length === 0) return
+    setModelOpen(false)
+    if (onSelectModel !== undefined) {
+      const ok = await Promise.resolve(onSelectModel(value)).catch(() => false)
+      if (ok) setDisplayModel(value)
+      else setComposerNotice(`模型切换失败：${value} 未被接受（目录不可用或 Host 拒绝）`)
+      return
+    }
     if (onCommand === undefined) {
       setComposerNotice('当前环境不支持执行命令（演示模式）')
       return
     }
-    setModelOpen(false)
     const ok = await onCommand(`/model ${value}`)
     if (!ok) setComposerNotice(`模型切换失败：/model ${value} 被拒绝`)
   }
@@ -590,13 +611,13 @@ export function TerminalChat(props: TerminalChatProps) {
             <div className="model-select">
               <button
                 className="model-static"
-                title={model === null ? '切换模型（当前模型未知）' : '切换模型'}
+                title={(displayModel ?? model) === null ? '切换模型（当前模型未知）' : `切换模型（当前：${displayModel ?? model}）`}
                 onClick={() => {
-                  setModelDraft(model ?? modelDraft)
+                  setModelDraft(displayModel ?? model ?? modelDraft)
                   setModelOpen((o) => !o)
                 }}
               >
-                {model ?? '模型'}
+                {displayModel ?? model ?? '模型'}
               </button>
               {modelOpen && (
                 <div className="model-pop">
@@ -616,7 +637,7 @@ export function TerminalChat(props: TerminalChatProps) {
                       {modelOptions.map((name) => (
                         <button
                           key={name}
-                          className={name === modelDraft ? 'sel' : undefined}
+                          className={name === (displayModel ?? model) ? 'sel' : undefined}
                           onClick={() => {
                             setModelDraft(name)
                             void submitModel(name)

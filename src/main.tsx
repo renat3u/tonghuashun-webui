@@ -52,6 +52,7 @@ function DemoChat({ selectedName }: ChatOwnerProps) {
   const [messages, setMessages] = useState<ConvMessage[]>(INITIAL_MESSAGES)
   const [steps, setSteps] = useState<TrajStep[]>(INITIAL_STEPS)
   const [replying, setReplying] = useState(false)
+  const [model, setModel] = useState(MODELS[0] ?? 'DeepSeek V4 Flash Max')
   const idRef = useRef(100)
   const [error, setError] = useState<string | null>(null)
 
@@ -86,8 +87,12 @@ function DemoChat({ selectedName }: ChatOwnerProps) {
       selectedName={selectedName}
       directory="~/tonghuashun-harness"
       sessionId="th-20260807-0945"
-      model={MODELS[0] ?? 'DeepSeek V4 Flash Max'}
+      model={model}
       modelOptions={MODELS}
+      onSelectModel={(name) => {
+        setModel(name)
+        return true
+      }}
       version="0.1.0-demo"
       messages={messages}
       steps={steps}

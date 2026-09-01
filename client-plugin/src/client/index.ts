@@ -16,6 +16,7 @@ import type {
   ChatOps,
   ClientContext,
   FileReferenceCandidateLike,
+  ModelDirectoryLike,
   ObservableSnapshotLike,
   PermissionSelectLike,
   PluginEntryLike,
@@ -25,6 +26,7 @@ import type {
   SkillEntryLike,
 } from '../contract.js'
 import { registerThsConversation, type ConversationRegistriesLike } from '../conversation/nodes.js'
+import { findModelSelection } from '../lib/model-directory.js'
 import { TERMINAL_CSS } from './styles.generated.js'
 import { TerminalRoot } from './TerminalRoot.js'
 import { ChatPanel } from '../components/ChatPanel.js'
@@ -140,6 +142,34 @@ function makeChatOps(ctx: ClientContext, boundSessionId: string | undefined): Ch
       const result = await face.command(line)
       return result.ok
     },
+    loadModelDirectory() {
+      return loadModelsOf(ctx, boundSessionId)
+    },
+    async selectModel(model) {
+      const directory = await loadModelsOf(ctx, boundSessionId)
+      if (directory === null) return false
+      const selection = findModelSelection(directory, model)
+      if (selection === null) return false
+      const sessionId = boundSessionId ?? currentSessionId(ctx)
+      if (sessionId === undefined) return false
+      const connection = ctx.get?.('connection') as ConnectionHandleLike | undefined
+      const select = connection?.api?.sessions?.selectModel
+      if (select === undefined) return false
+      try {
+        const response = await select(
+          {
+            sessionId,
+            provider: selection.provider,
+            model: selection.model,
+            ...selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort },
+          },
+          new AbortController().signal,
+        )
+        return response.result.ok
+      } catch {
+        return false
+      }
+    },
     async updateQueue(itemId, action) {
       const face = sessionFaceOf(ctx, boundSessionId)
       if (face?.updateQueue === undefined) return false
@@ -155,21 +185,58 @@ function makeChatOps(ctx: ClientContext, boundSessionId: string | undefined): Ch
   }
 }
 
-/** DSH connection 服务的最小结构（skills / settings RPC）。 */
+/** 连接层 unary RPC 的响应信封：{ result: ok/value | error }（dsh-host-apiproxy 结构）。 */
+type RpcResponseLike<T> = Promise<{
+  result:
+    | { ok: true; value: T }
+    | { ok: false; error: { code: string; message: string } }
+}>
+
+/** DSH connection 服务的最小结构（skills / settings / sessions.models RPC）。 */
 interface ConnectionHandleLike {
   api?: {
     skills?: {
       list(
         req: { sessionId: string },
         signal?: AbortSignal,
-      ): Promise<{ ok: boolean; value?: { skills: readonly SkillEntryLike[] }; error?: unknown }>
+      ): RpcResponseLike<{ skills: readonly SkillEntryLike[] }>
     }
     settings?: {
       openDocument(
         req: Record<string, never>,
         signal?: AbortSignal,
-      ): Promise<{ ok: boolean; value?: { opened: boolean }; error?: unknown }>
+      ): RpcResponseLike<{ opened: boolean }>
     }
+    /** 模型目录与选择走连接层 RPC，而不是 /model 斜杠命令（ui-model-selection 被 overlay 禁用）。 */
+    sessions?: {
+      models(
+        req: { sessionId: string },
+        signal?: AbortSignal,
+      ): RpcResponseLike<ModelDirectoryLike>
+      selectModel(
+        req: { sessionId: string; provider: string; model: string; reasoningEffort?: string },
+        signal?: AbortSignal,
+      ): RpcResponseLike<{ selected: { provider: string; model: string } }>
+    }
+  }
+}
+
+/** 从 connection 服务读取会话模型目录；服务不可用时返回 null。 */
+async function loadModelsOf(ctx: ClientContext, boundSessionId: string | undefined): Promise<ModelDirectoryLike | null> {
+  const sessionId = boundSessionId ?? currentSessionId(ctx)
+  if (sessionId === undefined) return null
+  const connection = ctx.get?.('connection') as ConnectionHandleLike | undefined
+  const models = connection?.api?.sessions?.models
+  if (models === undefined) return null
+  try {
+    const { result } = await models({ sessionId }, new AbortController().signal)
+    if (!result.ok) return null
+    return {
+      current: result.value.current ?? null,
+      groups: result.value.groups ?? [],
+    }
+  } catch {
+    return null
   }
 }
 
@@ -213,8 +280,8 @@ function makeRootOps(ctx: ClientContext): RootOps {
       const connection = ctx.get?.('connection') as ConnectionHandleLike | undefined
       const list = connection?.api?.skills?.list
       if (list === undefined) return []
-      const result = await list({ sessionId })
-      return result.ok ? (result.value?.skills ?? []) : []
+      const response = await list({ sessionId })
+      return response.result.ok ? response.result.value.skills : []
     },
     async listPlugins() {
       const remote = ctx.get?.('remote') as RemoteLike | undefined
@@ -227,8 +294,8 @@ function makeRootOps(ctx: ClientContext): RootOps {
       const connection = ctx.get?.('connection') as ConnectionHandleLike | undefined
       const open = connection?.api?.settings?.openDocument
       if (open === undefined) return false
-      const result = await open({}, new AbortController().signal)
-      return result.ok
+      const response = await open({}, new AbortController().signal)
+      return response.result.ok
     },
     async searchWorkspaceFiles(query, signal) {
       const sessionId = currentSessionId(ctx)
@@ -254,6 +321,88 @@ function makeRootOps(ctx: ClientContext): RootOps {
   }
 }
 
+/** 槽位冲突（热重载时旧 fiber 尚未释放 root / terminal.chat）的判定。 */
+function isSlotOccupancyError(error: unknown): boolean {
+  return error instanceof Error
+    && (/already has a registration/.test(error.message) || /is already declared/.test(error.message))
+}
+
+/** 热重载冲突重试参数：旧 fiber 的 disposer 通常在下一次事件循环内落地。 */
+const ROOT_RETRY_BASE_MS = 100
+const ROOT_RETRY_MAX_MS = 1000
+const ROOT_RETRY_ATTEMPTS = 12
+
+/**
+ * 注册 root + terminal.chat。'root' 是 single 槽，本插件固定 priority=-1
+ * （lowest renders）遮蔽内置 ui-layout；热重载时新 fiber 可能在旧 fiber
+ * disposer 生效前先跑 apply，同 priority 的第二次注册会抛
+ * "already has a registration"。这里不每次换 priority（那样会遗留一串影子
+ * 条目），而是退避重试到旧条目真正释放；注册成功后的根释放器同时撤掉
+ * 子槽贡献。非冲突错误照常抛出，让 loader 审计可见。
+ * @param ctx - client root context.
+ * @returns 释放器：取消在途重试并释放已注册的 root/chat 条目。
+ */
+function registerTerminalRoot(ctx: ClientContext): () => void {
+  let alive = true
+  let dispose: (() => void) | null = null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let attempts = 0
+
+  const attempt = (): void => {
+    if (!alive) return
+    let disposeRoot: (() => void) | undefined
+    try {
+      disposeRoot = ctx.slots.register(
+        {
+          name: 'root',
+          priority: -1,
+          children: {
+            'terminal.chat': { kind: 'single', scope: 'session-maybe' },
+          },
+          inject: () => makeRootOps(ctx),
+        },
+        TerminalRoot,
+      )
+      // 等待 root 条目声明 terminal.chat 后注册 ChatPanel（声明倒塌时自动移除）。
+      const disposeChat = ctx.slots.inject(
+        'terminal.chat',
+        () =>
+          ctx.slots.register(
+            {
+              name: 'terminal.chat',
+              inject: (sessionId) => makeChatOps(ctx, sessionId),
+            },
+            ChatPanel,
+          ),
+      )
+      let settled = false
+      dispose = () => {
+        if (settled) return
+        settled = true
+        disposeChat()
+        disposeRoot?.()
+      }
+    } catch (error) {
+      disposeRoot?.()
+      if (!isSlotOccupancyError(error)) throw error
+      attempts += 1
+      if (attempts >= ROOT_RETRY_ATTEMPTS) {
+        console.error('client-tonghuashun: root slot is still occupied after retries; keeping the existing terminal', error)
+        return
+      }
+      const delay = Math.min(ROOT_RETRY_MAX_MS, ROOT_RETRY_BASE_MS * 2 ** (attempts - 1))
+      timer = setTimeout(attempt, delay)
+    }
+  }
+
+  attempt()
+  return () => {
+    alive = false
+    if (timer !== undefined) clearTimeout(timer)
+    dispose?.()
+  }
+}
+
 /**
  * Registers the terminal into the runtime's 'root' slot and the chat panel
  * into the declared 'terminal.chat' child slot.
@@ -270,31 +419,8 @@ export function apply(ctx: ClientContext): void {
   }
 
   ctx.effect(
-    () =>
-      ctx.slots.register(
-        {
-          name: 'root',
-          children: {
-            'terminal.chat': { kind: 'single', scope: 'session-maybe' },
-          },
-          inject: () => makeRootOps(ctx),
-        },
-        TerminalRoot,
-      ),
+    () => registerTerminalRoot(ctx),
     'client-tonghuashun: terminal root registration',
-  )
-
-  // 等待 root 条目声明 terminal.chat 后注册 ChatPanel（声明倒塌时自动移除）。
-  ctx.slots.inject(
-    'terminal.chat',
-    () =>
-      ctx.slots.register(
-        {
-          name: 'terminal.chat',
-          inject: (sessionId) => makeChatOps(ctx, sessionId),
-        },
-        ChatPanel,
-      ),
   )
 
   // 注册会话节点定义 + chat 视图构建器：ui-conversation 被 overlay 禁用后
